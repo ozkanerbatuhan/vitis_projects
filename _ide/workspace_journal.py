@@ -48,3 +48,81 @@ status = platform.build()
 
 comp.build()
 
+status = comp.clean()
+
+status = platform.build()
+
+comp.build()
+
+status = comp.clean()
+
+comp = client.get_component(name="mlp_app")
+status = comp.clean()
+
+status = comp.clean()
+
+status = platform.build()
+
+comp.build()
+
+status = platform.build()
+
+comp = client.get_component(name="lwip_echo_server")
+comp.build()
+
+status = platform.build()
+
+comp.build()
+
+status = comp.clean()
+
+comp = client.get_component(name="mlp_app")
+status = comp.clean()
+
+status = platform.build()
+
+comp.build()
+
+status = platform.build()
+
+comp = client.get_component(name="lwip_echo_server")
+comp.build()
+
+status = comp.clean()
+
+comp = client.get_component(name="mlp_app")
+status = comp.clean()
+
+status = platform.build()
+
+comp = client.get_component(name="lwip_echo_server")
+comp.build()
+
+comp = client.get_component(name="mlp_app")
+status = comp.clean()
+
+status = platform.build()
+
+comp.build()
+
+status = platform.build()
+
+comp = client.get_component(name="lwip_echo_server")
+comp.build()
+
+comp = client.get_component(name="mlp_app")
+status = comp.clean()
+
+status = platform.build()
+
+comp = client.get_component(name="lwip_echo_server")
+status = comp.clean()
+
+comp = client.get_component(name="mlp_app")
+comp.build()
+
+status = platform.build()
+
+comp = client.get_component(name="lwip_echo_server")
+comp.build()
+

@@ -50,7 +50,12 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
      * ARM Cortex-A9 da little-endian olduğu için doğrudan okunur.
      */
     if (p->tot_len >= 40 * sizeof(float)) {
-        float *raw = (float *)p->payload;
+        float raw[40];
+        /* p->payload is NOT 4-byte aligned (offset by 42 bytes typically), 
+         * reading directly from it as float* causes ARM Data Abort exceptions! 
+         * Must copy to an aligned local buffer first. */
+        memcpy(raw, p->payload, 40 * sizeof(float));
+        
         s16 inputs[40];
         int i;
 

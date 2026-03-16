@@ -69,20 +69,29 @@ static inline u32 mlp_get_result(void) {
  */
 static inline u32 mlp_predict(s16 *inputs) {
     int i;
+    int timeout = 0;
 
+    xil_printf("  -> mlp_predict: 1) Loading inputs...\r\n");
     /* 1) 40 girişi yükle */
     for (i = 0; i < 40; i++) {
         mlp_write_input((u8)i, inputs[i]);
     }
 
+    xil_printf("  -> mlp_predict: 2) Starting MLP...\r\n");
     /* 2) Başlat */
     mlp_start();
 
+    xil_printf("  -> mlp_predict: 3) Waiting for finish...\r\n");
     /* 3) Bitene kadar bekle */
     while (!mlp_is_done()) {
-        /* busy-wait — HFT için ~µs mertebesinde */
+        timeout++;
+        if (timeout > 10000000) {
+            xil_printf("  -> mlp_predict: FATAL ERROR - MLP Hardware TIMEOUT! (No clock?)\r\n");
+            return 0; // Fallback
+        }
     }
 
+    xil_printf("  -> mlp_predict: 4) Done! Reading result...\r\n");
     /* 4) Sonuç */
     return mlp_get_result();
 }
