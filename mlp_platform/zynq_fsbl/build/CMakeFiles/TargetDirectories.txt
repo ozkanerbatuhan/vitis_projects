@@ -1,0 +1,4 @@
+D:/vitis_projects/mlp_platform/zynq_fsbl/build/CMakeFiles/fsbl.elf.dir
+D:/vitis_projects/mlp_platform/zynq_fsbl/build/CMakeFiles/print_build_info.dir
+D:/vitis_projects/mlp_platform/zynq_fsbl/build/CMakeFiles/edit_cache.dir
+D:/vitis_projects/mlp_platform/zynq_fsbl/build/CMakeFiles/rebuild_cache.dir

@@ -1,0 +1,27 @@
+/ {
+	amba_pl: amba_pl {
+		ranges;
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		firmware-name = "mlp_system_wrapper.bit.bin";
+		clocking0: clocking0 {
+			compatible = "xlnx,fclk";
+			assigned-clocks = <&clkc 15>;
+			assigned-clock-rates = <100000000>;
+			#clock-cells = <0>;
+			clock-output-names = "fabric_clk";
+			clocks = <&clkc 15>;
+		};
+		mlp_axi_wrapper_0: mlp_axi_wrapper@40000000 {
+			compatible = "xlnx,mlp-axi-wrapper-1.0";
+			status = "okay";
+			clock-names = "S_AXI_ACLK";
+			xlnx,ip-name = "mlp_axi_wrapper";
+			xlnx,edk-iptype = "PERIPHERAL";
+			reg = <0x40000000 0x1000>;
+			clocks = <&clkc 15>;
+			xlnx,name = "mlp_axi_wrapper_0";
+		};
+	};
+};
