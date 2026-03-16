@@ -10,6 +10,10 @@
 #include "xil_io.h"
 #include "xparameters.h"
 
+#ifndef MLP_FEATURE_COUNT
+#define MLP_FEATURE_COUNT 40
+#endif
+
 /*
  * Base address — xparameters.h'den gelir.
  * XPAR_MLP_AXI_WRAPPER_0_BASEADDR = 0x40000000
@@ -71,27 +75,22 @@ static inline u32 mlp_predict(s16 *inputs) {
     int i;
     int timeout = 0;
 
-    xil_printf("  -> mlp_predict: 1) Loading inputs...\r\n");
-    /* 1) 40 girişi yükle */
-    for (i = 0; i < 40; i++) {
+    /* 1) MLP_FEATURE_COUNT girişi yükle */
+    for (i = 0; i < MLP_FEATURE_COUNT; i++) {
         mlp_write_input((u8)i, inputs[i]);
     }
 
-    xil_printf("  -> mlp_predict: 2) Starting MLP...\r\n");
     /* 2) Başlat */
     mlp_start();
 
-    xil_printf("  -> mlp_predict: 3) Waiting for finish...\r\n");
     /* 3) Bitene kadar bekle */
     while (!mlp_is_done()) {
         timeout++;
         if (timeout > 10000000) {
-            xil_printf("  -> mlp_predict: FATAL ERROR - MLP Hardware TIMEOUT! (No clock?)\r\n");
             return 0; // Fallback
         }
     }
 
-    xil_printf("  -> mlp_predict: 4) Done! Reading result...\r\n");
     /* 4) Sonuç */
     return mlp_get_result();
 }

@@ -63,9 +63,9 @@ def main():
         return
 
     # --- Çoklu test (gecikme ölçümü) ---
-    print(f"\n[2] 10 paket gecikme testi:")
+    print(f"\n[2] 1000 paket gecikme testi:")
     latencies = []
-    for i in range(10):
+    for i in range(1000):
         features = [random.uniform(-1.0, 1.0) for _ in range(40)]
         t0 = time.perf_counter()
         result = send_prediction(features, sock)
@@ -74,9 +74,10 @@ def main():
         if result is not None:
             latency_us = (t1 - t0) * 1_000_000
             latencies.append(latency_us)
-            print(f"    [{i+1:2d}] {LABELS.get(result, '?'):4s}  |  {latency_us:8.1f} µs")
+           #print(f"    [{i+1:2d}] {LABELS.get(result, '?'):4s}  |  {latency_us:8.1f} µs")
         else:
-            print(f"    [{i+1:2d}] Zaman aşımı!")
+            #print(f"    [{i+1:2d}] Zaman aşımı!")
+            pass
 
     if latencies:
         avg = sum(latencies) / len(latencies)

@@ -126,3 +126,7 @@ status = platform.build()
 comp = client.get_component(name="lwip_echo_server")
 comp.build()
 
+status = platform.build()
+
+comp.build()
+
