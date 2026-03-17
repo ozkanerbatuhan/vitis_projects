@@ -1,9 +1,4 @@
-/*
- * main.c — HFT MLP ZedBoard Uygulaması
- *
- * UDP Port 7000'den 40 adet float (Q8.8) alır,
- * MLP'ye gönderir, sonucu LED'de gösterir ve UDP ile geri yollar.
- */
+
 #include <stdio.h>
 #include <string.h>
 
@@ -74,10 +69,9 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
             inputs[i] = FLOAT_TO_Q88(raw[i]);
         }
 
-        /* MLP inference */
+
         u32 result = mlp_predict(inputs);
 
-        /* Sonucu geri gönder (1 byte) */
         struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 1, PBUF_RAM);
         if (reply != NULL) {
             ((u8 *)reply->payload)[0] = (u8)result;
@@ -89,7 +83,6 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
     pbuf_free(p);
 }
 
-/* ── Ana Program ── */
 int main(void)
 {
     ip_addr_t ipaddr, netmask, gw;
@@ -103,16 +96,13 @@ int main(void)
     /* LwIP init */
     lwip_init();
 
-    /* IP adresleri ayarla (IP4_ADDR ile güvenilir) */
     IP4_ADDR(&ipaddr,  BOARD_IP_0, BOARD_IP_1, BOARD_IP_2, BOARD_IP_3);
     IP4_ADDR(&netmask, BOARD_NM_0, BOARD_NM_1, BOARD_NM_2, BOARD_NM_3);
     IP4_ADDR(&gw,      BOARD_GW_0, BOARD_GW_1, BOARD_GW_2, BOARD_GW_3);
 
-    /* MAC adresini netif'e kopyala */
     server_netif.hwaddr_len = 6;
     memcpy(server_netif.hwaddr, mac_addr, 6);
 
-    /* Ağ arayüzünü ekle */
     netif_ptr = xemac_add(&server_netif, &ipaddr, &netmask, &gw,
                           mac_addr, PLATFORM_EMAC_BASEADDR);
     if (!netif_ptr) {
@@ -121,7 +111,6 @@ int main(void)
     netif_set_default(netif_ptr);
     netif_set_up(netif_ptr);
 
-    /* UDP PCB oluştur ve bağla */
     udp_pcb = udp_new();
     if (udp_pcb == NULL) {
         return -1;
@@ -134,12 +123,9 @@ int main(void)
 
     udp_recv(udp_pcb, udp_recv_callback, NULL);
 
-    /* Ana döngü — LwIP paketlerini işle */
     while (1) {
         xemacif_input(netif_ptr);
     }
-
-    /* Buraya gelinmemeli */
     cleanup_platform();
     return 0;
 }

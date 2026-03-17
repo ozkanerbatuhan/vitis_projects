@@ -24,7 +24,7 @@ LABELS = {0: "SELL", 1: "HOLD", 2: "BUY"}
 def send_prediction(features: list[float], sock: socket.socket) -> int | None:
     """40 float gönder, 1 byte sonuç al."""
     payload = struct.pack('<40f', *features)
-    # Enable broadcast and send to the global broadcast address first
+    
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.sendto(payload, ("255.255.255.255", BOARD_PORT))
     try:
@@ -42,7 +42,7 @@ def main():
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(TIMEOUT)
-    # Ethernet adaptörüne bağla (Wi-Fi ile aynı subnet çakışmasını önler)
+    
     sock.bind(("192.168.1.100", 0))
 
     # --- Tek seferlik test ---
