@@ -152,6 +152,10 @@ include_folder: include
 lib_folder: lib
 libsrc_folder: libsrc
 drv_info:
+  axi_dma_0:
+    driver: axidma
+    ip_name: axi_dma
+    path: D:\AMDDesignTools\2025.2\Vitis\data\embeddedsw\XilinxProcessorIPLib\drivers\axidma_v9_20
   mlp_axi_wrapper_0: None
   ps7_afi_0: None
   ps7_afi_1: None

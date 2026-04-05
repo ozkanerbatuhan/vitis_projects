@@ -345,6 +345,15 @@ XILTIMER_tick_timer:STRING=None
 YOCTO:BOOL=OFF
 
 //Value Computed by CMake
+axidma_BINARY_DIR:STATIC=D:/vitis_projects/mlp_platform/zynq_fsbl/zynq_fsbl_bsp/libsrc/build_configs/gen_bsp/libsrc/axidma/src
+
+//Value Computed by CMake
+axidma_IS_TOP_LEVEL:STATIC=OFF
+
+//Value Computed by CMake
+axidma_SOURCE_DIR:STATIC=D:/vitis_projects/mlp_platform/zynq_fsbl/zynq_fsbl_bsp/libsrc/axidma/src
+
+//Value Computed by CMake
 bsp_BINARY_DIR:STATIC=D:/vitis_projects/mlp_platform/zynq_fsbl/zynq_fsbl_bsp/libsrc/build_configs/gen_bsp
 
 //Value Computed by CMake
@@ -941,7 +950,7 @@ CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=34
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=35
 //ADVANCED property for variable: CMAKE_OBJCOPY
 CMAKE_OBJCOPY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_OBJDUMP

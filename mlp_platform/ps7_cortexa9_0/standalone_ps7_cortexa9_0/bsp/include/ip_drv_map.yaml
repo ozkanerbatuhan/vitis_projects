@@ -1,3 +1,6 @@
+axi_dma_0:
+- axi_dma
+- axidma
 mlp_axi_wrapper_0:
 - mlp_axi_wrapper
 - None

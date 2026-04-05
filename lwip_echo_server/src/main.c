@@ -1,15 +1,12 @@
 
-#include <stdio.h>
 #include <string.h>
 
-#include "xparameters.h"
 #include "netif/xadapter.h"
 #include "lwip/init.h"
 #include "lwip/udp.h"
 #include "lwip/ip4_addr.h"
 #include "lwip/err.h"
 #include "lwip/netif.h"
-#include "lwip/timeouts.h"
 
 #include "platform.h"
 #include "platform_config.h"
@@ -40,8 +37,7 @@
 
 #define UDP_PORT        7000
 
-/* ── Q8.8 dönüşüm ── */
-#define FLOAT_TO_Q88(f)  ((s16)((f) * 256.0f))
+/* Q8.8 donusumu artik PC tarafinda yapiliyor */
 
 /* ── Global değişkenler ── */
 static unsigned char mac_addr[6] = {BOARD_MAC_0, BOARD_MAC_1, BOARD_MAC_2, BOARD_MAC_3, BOARD_MAC_4, BOARD_MAC_5};
@@ -54,24 +50,17 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
     (void)arg;
 
     if (p == NULL) return;
-    if (p->tot_len >= MLP_FEATURE_COUNT * sizeof(float)) {
-        float raw[MLP_FEATURE_COUNT];
-        /* p->payload is NOT 4-byte aligned (offset by 42 bytes typically), 
-         * reading directly from it as float* causes ARM Data Abort exceptions! 
-         * Must copy to an aligned local buffer first. */
-        memcpy(raw, p->payload, MLP_FEATURE_COUNT * sizeof(float));
-        
+
+    /* PC tarafindan Q8.8 (s16) olarak gonderilen veri: 40 x 2 = 80 byte */
+    if (p->tot_len >= MLP_FEATURE_COUNT * sizeof(s16)) {
         s16 inputs[MLP_FEATURE_COUNT];
-        int i;
+        /* p->payload hizali (aligned) olmayabilir, memcpy ile guvenli kopyalama */
+        memcpy(inputs, p->payload, MLP_FEATURE_COUNT * sizeof(s16));
 
-        /* float → Q8.8 dönüşüm */
-        for (i = 0; i < MLP_FEATURE_COUNT; i++) {
-            inputs[i] = FLOAT_TO_Q88(raw[i]);
-        }
-
-
+        /* MLP inference */
         u32 result = mlp_predict(inputs);
 
+        /* Sonucu geri gonder (1 byte) */
         struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 1, PBUF_RAM);
         if (reply != NULL) {
             ((u8 *)reply->payload)[0] = (u8)result;
