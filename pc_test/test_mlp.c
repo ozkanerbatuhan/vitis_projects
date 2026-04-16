@@ -24,10 +24,15 @@
 #define LOCAL_IP        "0.0.0.0"
 #define FEATURE_COUNT   40
 #define TIMEOUT_MS      2000
-#define BENCH_ROUNDS    1000
+#define BENCH_ROUNDS    1000000
+#define WARMUP_ROUNDS   5000
 
 /* ── Etiketler ── */
 static const char *LABELS[] = {"SELL", "HOLD", "BUY"};
+
+/* ── Global Arrayler (Stack Overflow onlemek icin) ── */
+static double latencies[BENCH_ROUNDS];
+static int results_arr[BENCH_ROUNDS];
 
 /* ── Q8.8 donusum ── */
 static inline int16_t float_to_q88(float f) {
@@ -78,7 +83,6 @@ int main(void)
     SOCKET sock;
     struct sockaddr_in local_addr, board_addr;
     LARGE_INTEGER freq, t0, t1;
-    double latencies[BENCH_ROUNDS];
     int lat_count = 0;
     int i;
 
@@ -153,8 +157,19 @@ int main(void)
         return 1;
     }
 
-    /* --- [2] Benchmark --- */
-    printf("\n[2] %d paket gecikme testi:\n", BENCH_ROUNDS);
+    /* --- [2] Warmup (Isinma) Turu --- */
+    printf("\n[2] WARMUP: %d paket gonderiliyor (KASE/ARP isinmasi)...\n", WARMUP_ROUNDS);
+    for (i = 0; i < WARMUP_ROUNDS; i++) {
+        int j;
+        for (j = 0; j < FEATURE_COUNT; j++) {
+            features[j] = rand_float();
+        }
+        send_prediction(features, sock, &board_addr);
+    }
+    printf("    Isinma tamamlandi!\n");
+
+    /* --- [3] Benchmark --- */
+    printf("\n[3] %d paket gercek gecikme testi basliyor...\n", BENCH_ROUNDS);
 
     for (i = 0; i < BENCH_ROUNDS; i++) {
         int j;
@@ -169,6 +184,7 @@ int main(void)
         if (result >= 0) {
             double us = (double)(t1.QuadPart - t0.QuadPart) * 1000000.0
                         / (double)freq.QuadPart;
+            results_arr[lat_count] = result;
             latencies[lat_count++] = us;
         }
     }
@@ -185,6 +201,17 @@ int main(void)
         printf("    Ortalama: %.1f us\n", sum / lat_count);
         printf("    Min:      %.1f us\n", mn);
         printf("    Max:      %.1f us\n", mx);
+
+        /* CSV'ye kaydet */
+        FILE *f = fopen("latencies.csv", "w");
+        if (f) {
+            fprintf(f, "Packet,Latency_us,Result\n");
+            for (i = 0; i < lat_count; i++) {
+                fprintf(f, "%d,%.1f,%d\n", i + 1, latencies[i], results_arr[i]);
+            }
+            fclose(f);
+            printf("\n    > Graph verisi 'latencies.csv' dosyasina kaydedildi.\n");
+        }
     } else {
         printf("\n    HATA: Hicbir paket yanit almadi!\n");
     }

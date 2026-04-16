@@ -3,6 +3,11 @@
 
 #include "xil_io.h"
 #include "xparameters.h"
+#include "xaxidma.h"
+#include "xil_cache.h"
+
+extern XAxiDma AxiDma;
+extern int DmaInitSuccess;
 
 #ifndef MLP_FEATURE_COUNT
 #define MLP_FEATURE_COUNT 40
@@ -26,14 +31,7 @@ static inline u32 mlp_read_reg(u32 offset) {
     return Xil_In32(MLP_BASE_ADDR + offset);
 }
 
-static inline void mlp_write_input(u8 addr, s16 data) {
-    u32 val = ((u32)(addr & 0x3F) << 16) | ((u32)data & 0xFFFF);
-    mlp_write_reg(MLP_REG_INPUT, val);
-}
-static inline void mlp_start(void) {
-    mlp_write_reg(MLP_REG_CTRL, 0x1);
-    mlp_write_reg(MLP_REG_CTRL, 0x0);  /* pulse bitir */
-}
+/* AXI-Lite INPUT ve START kaldirildi - DMA + AXI-Stream tarafindan yapiliyor */
 
 static inline int mlp_is_done(void) {
     return (mlp_read_reg(MLP_REG_STATUS) & 0x1);
@@ -48,14 +46,21 @@ static inline u32 mlp_get_result(void) {
 }
 
 static inline u32 mlp_predict(s16 *inputs) {
-    int i;
     int timeout = 0;
 
-    for (i = 0; i < MLP_FEATURE_COUNT; i++) {
-        mlp_write_input((u8)i, inputs[i]);
+    if (!DmaInitSuccess) {
+        return 0; // DMA calismiyorsa Data Abort almamak icin bekleme/yazma yapma
     }
 
-    mlp_start();
+    /* Islemcinin L1/L2 onbellegini DDR'a yaz (DMA RAM'den okuyacak) */
+    Xil_DCacheFlushRange((UINTPTR)inputs, MLP_FEATURE_COUNT * sizeof(s16));
+
+    /* DMA ile RAM'den AXI-Stream uzerinden PL'e yolla (Tek Komut) */
+    XAxiDma_SimpleTransfer(&AxiDma, (UINTPTR)inputs, 
+                           MLP_FEATURE_COUNT * sizeof(s16), 
+                           XAXIDMA_DMA_TO_DEVICE);
+
+    /* VHDL tarafi AXI-Stream TLAST alinca hesabi otomatik baslatacak */
 
     while (!mlp_is_done()) {
         timeout++;

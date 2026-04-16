@@ -1,6 +1,7 @@
-
+#include <stdio.h>
 #include <string.h>
 
+#include "xparameters.h"
 #include "netif/xadapter.h"
 #include "lwip/init.h"
 #include "lwip/udp.h"
@@ -40,6 +41,10 @@
 /* Q8.8 donusumu artik PC tarafinda yapiliyor */
 
 /* ── Global değişkenler ── */
+#include "xaxidma.h"
+
+XAxiDma AxiDma;
+int DmaInitSuccess = 0;
 static unsigned char mac_addr[6] = {BOARD_MAC_0, BOARD_MAC_1, BOARD_MAC_2, BOARD_MAC_3, BOARD_MAC_4, BOARD_MAC_5};
 static struct netif server_netif;
 
@@ -81,6 +86,16 @@ int main(void)
 
     /* Platform init */
     init_platform();
+
+    /* AXI DMA Init */
+    XAxiDma_Config *CfgPtr = XAxiDma_LookupConfig(XPAR_XAXIDMA_0_BASEADDR);
+    
+    if (CfgPtr) {
+        if (XAxiDma_CfgInitialize(&AxiDma, CfgPtr) == XST_SUCCESS) {
+            XAxiDma_IntrDisable(&AxiDma, XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DMA_TO_DEVICE);
+            DmaInitSuccess = 1;
+        }
+    }
 
     /* LwIP init */
     lwip_init();
