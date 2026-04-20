@@ -24,7 +24,7 @@
 #define LOCAL_IP        "0.0.0.0"
 #define FEATURE_COUNT   40
 #define TIMEOUT_MS      2000
-#define BENCH_ROUNDS    1000000
+#define BENCH_ROUNDS    100000
 #define WARMUP_ROUNDS   5000
 
 /* ── Etiketler ── */
