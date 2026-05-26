@@ -3,7 +3,7 @@ connect
 
 # FPGA'yi programla (bitstream)
 targets -set -filter {name =~ "APU*"}
-fpga "D:/vitis_projects/lwip_echo_server/_ide/bitstream/mlp_system_wrapper.bit"
+fpga "D:/vivado projects/hft/hft.runs/impl_1/mlp_system_wrapper.bit"
 
 # PS7 init — Zynq donanımını başlat
 targets -set -nocase -filter {name =~ "*A9*#0"}
