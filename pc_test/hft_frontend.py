@@ -68,7 +68,9 @@ class HFTFrontendApp(ctk.CTk):
         
         self.is_connected = False
         self.is_streaming = False
-        self.after(0, lambda: self.btn_stream.configure(text="Tetikle / Akışı Başlat", fg_color="green", hover_color="darkgreen"))
+        self.after(0, lambda: self.btn_stream.configure(state="normal", text="Tetikle / Akışı Başlat", fg_color="green", hover_color="darkgreen"))
+        if hasattr(self, 'btn_test_stream'):
+            self.after(0, lambda: self.btn_test_stream.configure(state="normal", text="Test Akışı (Random)", fg_color="blue", hover_color="darkblue"))
         print("C++ motoruyla bağlantı kesildi.")
 
     def handle_engine_message(self, msg):
@@ -80,7 +82,9 @@ class HFTFrontendApp(ctk.CTk):
             self.after(0, lambda: self.btn_send_model.configure(state="normal"))
         elif msg == "STATUS:STREAM_FINISHED" or msg == "STATUS:STOPPED":
             self.is_streaming = False
-            self.after(0, lambda: self.btn_stream.configure(text="Tetikle / Akışı Başlat", fg_color="green", hover_color="darkgreen"))
+            self.after(0, lambda: self.btn_stream.configure(state="normal", text="Tetikle / Akışı Başlat", fg_color="green", hover_color="darkgreen"))
+            if hasattr(self, 'btn_test_stream'):
+                self.after(0, lambda: self.btn_test_stream.configure(state="normal", text="Test Akışı (Random)", fg_color="blue", hover_color="darkblue"))
         elif msg.startswith("STATUS:"):
             # STATUS:BUY|LATENCY:12.34
             parts = msg.split('|')
@@ -122,8 +126,14 @@ class HFTFrontendApp(ctk.CTk):
         btn_select = ctk.CTkButton(self.tab_setup, text="Dosya Seç", command=self.select_model_file)
         btn_select.pack(pady=10)
         
-        self.btn_send_model = ctk.CTkButton(self.tab_setup, text="FPGA'e Gönder", state="disabled", fg_color="green", hover_color="darkgreen", command=self.send_model)
-        self.btn_send_model.pack(pady=30)
+        frame_btns = ctk.CTkFrame(self.tab_setup, fg_color="transparent")
+        frame_btns.pack(pady=30)
+        
+        self.btn_send_model = ctk.CTkButton(frame_btns, text="FPGA'e Gönder", state="disabled", fg_color="green", hover_color="darkgreen", command=self.send_model)
+        self.btn_send_model.pack(side="left", padx=10)
+        
+        self.btn_test_model = ctk.CTkButton(frame_btns, text="Test Modeli Gönder (Random)", fg_color="blue", hover_color="darkblue", command=self.send_test_model)
+        self.btn_test_model.pack(side="left", padx=10)
         
         self.setup_status = ctk.CTkLabel(self.tab_setup, text="", text_color="yellow")
         self.setup_status.pack(pady=10)
@@ -139,6 +149,11 @@ class HFTFrontendApp(ctk.CTk):
         self.btn_send_model.configure(state="disabled")
         self.update_setup_status("C++ motoruna komut gönderiliyor...", "yellow")
         self.send_command(f"MODEL:{self.model_filepath}")
+
+    def send_test_model(self):
+        self.btn_send_model.configure(state="disabled")
+        self.update_setup_status("C++ motoruna TEST_MODEL komutu gönderiliyor...", "yellow")
+        self.send_command("TEST_MODEL")
 
     def update_setup_status(self, text, color):
         self.after(0, lambda: self.setup_status.configure(text=text, text_color=color))
@@ -168,8 +183,14 @@ class HFTFrontendApp(ctk.CTk):
         self.lbl_delay_val.pack(side="right", padx=10, pady=10)
         self.slider_delay.configure(command=self.update_delay_lbl)
         
-        self.btn_stream = ctk.CTkButton(self.tab_stream, text="Tetikle / Akışı Başlat", fg_color="green", hover_color="darkgreen", command=self.toggle_stream)
-        self.btn_stream.pack(pady=10)
+        frame_btns = ctk.CTkFrame(self.tab_stream, fg_color="transparent")
+        frame_btns.pack(pady=10)
+        
+        self.btn_stream = ctk.CTkButton(frame_btns, text="Tetikle / Akışı Başlat", fg_color="green", hover_color="darkgreen", command=self.toggle_stream)
+        self.btn_stream.pack(side="left", padx=10)
+        
+        self.btn_test_stream = ctk.CTkButton(frame_btns, text="Test Akışı (Random)", fg_color="blue", hover_color="darkblue", command=self.toggle_test_stream)
+        self.btn_test_stream.pack(side="left", padx=10)
         
         self.lbl_result = ctk.CTkLabel(self.tab_stream, text="BEKLENİYOR...", font=ctk.CTkFont(size=30, weight="bold"), text_color="gray")
         self.lbl_result.pack(pady=20)
@@ -194,13 +215,29 @@ class HFTFrontendApp(ctk.CTk):
         if self.is_streaming:
             self.is_streaming = False
             self.btn_stream.configure(text="Tetikle / Akışı Başlat", fg_color="green", hover_color="darkgreen")
+            self.btn_test_stream.configure(state="normal", text="Test Akışı (Random)", fg_color="blue", hover_color="darkblue")
             self.send_command("STOP")
         else:
             self.is_streaming = True
             self.packet_count = 0
             self.btn_stream.configure(text="Akışı Durdur", fg_color="red", hover_color="darkred")
+            self.btn_test_stream.configure(state="disabled")
             delay_ms = str(int(self.slider_delay.get()))
             self.send_command(f"STREAM:{self.csv_filepath}:{delay_ms}")
+
+    def toggle_test_stream(self):
+        if self.is_streaming:
+            self.is_streaming = False
+            self.btn_stream.configure(state="normal", text="Tetikle / Akışı Başlat", fg_color="green", hover_color="darkgreen")
+            self.btn_test_stream.configure(text="Test Akışı (Random)", fg_color="blue", hover_color="darkblue")
+            self.send_command("STOP")
+        else:
+            self.is_streaming = True
+            self.packet_count = 0
+            self.btn_stream.configure(state="disabled")
+            self.btn_test_stream.configure(text="Test Akışını Durdur", fg_color="red", hover_color="darkred")
+            delay_ms = str(int(self.slider_delay.get()))
+            self.send_command(f"TEST_STREAM:{delay_ms}")
 
     def update_stream_ui(self, status, count, latency):
         if status == "SELL":

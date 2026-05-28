@@ -10,6 +10,7 @@
 #include <mutex>
 #include <winsock2.h>
 #include <windows.h>
+#include <random>
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -131,6 +132,78 @@ void stream_task(string filepath, int delay_ms) {
     is_streaming = false;
 }
 
+// Test akisi icin random veri ureten thread
+void test_stream_task(int delay_ms) {
+    ofstream log_file("execution_log.csv", ios::app);
+    if (log_file.tellp() == 0) {
+        log_file << "Timestamp_us,Latency_us,Result\n";
+    }
+
+    LARGE_INTEGER freq, t0, t1;
+    QueryPerformanceFrequency(&freq);
+
+    random_device rd;
+    mt19937 mt(rd());
+    uniform_real_distribution<float> dist(-1.0f, 1.0f);
+
+    while (is_streaming) {
+        vector<int16_t> q88_features(64);
+        for(int i=0; i<64; ++i) {
+            q88_features[i] = static_cast<int16_t>(dist(mt) * 256.0f);
+        }
+
+        vector<uint8_t> payload;
+        payload.push_back(0x02);
+        payload.push_back(0x00);
+        payload.push_back(0x00);
+        payload.push_back(0x00);
+
+        const uint8_t* q88_bytes = reinterpret_cast<const uint8_t*>(q88_features.data());
+        payload.insert(payload.end(), q88_bytes, q88_bytes + (64 * sizeof(int16_t)));
+
+        QueryPerformanceCounter(&t0);
+        sendto(udp_sock, reinterpret_cast<const char*>(payload.data()), payload.size(), 0, (sockaddr*)&board_addr, sizeof(board_addr));
+
+        char rx_buf[64];
+        sockaddr_in from;
+        int fromlen = sizeof(from);
+        int n = recvfrom(udp_sock, rx_buf, sizeof(rx_buf), 0, (sockaddr*)&from, &fromlen);
+        QueryPerformanceCounter(&t1);
+
+        double latency_us = (double)(t1.QuadPart - t0.QuadPart) * 1000000.0 / (double)freq.QuadPart;
+        auto now_us = chrono::duration_cast<chrono::microseconds>(chrono::system_clock::now().time_since_epoch()).count();
+
+        if (n > 0) {
+            uint8_t res = static_cast<uint8_t>(rx_buf[0]);
+            string result_str;
+            if (res == 0) result_str = "SELL";
+            else if (res == 1) result_str = "HOLD";
+            else if (res == 2) result_str = "BUY";
+            else result_str = "UNKNOWN";
+
+            ostringstream msg;
+            msg << "STATUS:" << result_str << "|LATENCY:" << fixed << setprecision(2) << latency_us;
+            send_tcp_message(msg.str());
+
+            log_file << now_us << "," << fixed << setprecision(2) << latency_us << "," << result_str << "\n";
+            log_file.flush();
+        } else {
+            send_tcp_message("STATUS:TIMEOUT");
+            log_file << now_us << ",TIMEOUT,TIMEOUT\n";
+            log_file.flush();
+        }
+
+        if (delay_ms > 0 && is_streaming) {
+            this_thread::sleep_for(chrono::milliseconds(delay_ms));
+        }
+    }
+    
+    if (is_streaming) {
+        send_tcp_message("STATUS:STREAM_FINISHED");
+    }
+    is_streaming = false;
+}
+
 // Gelen string komutlarini (MODEL, STREAM, STOP) yonet
 void process_command(string cmd) {
     if (cmd.find("MODEL:") == 0) {
@@ -207,6 +280,48 @@ void process_command(string cmd) {
             if (stream_thread.joinable()) stream_thread.join();
             send_tcp_message("STATUS:STOPPED");
         }
+    }
+    else if (cmd == "TEST_MODEL") {
+        vector<float> floats(576); // Minimal Test Icin Ornek
+        random_device rd;
+        mt19937 mt(rd());
+        uniform_real_distribution<float> dist(-0.5f, 0.5f);
+        for(auto& f : floats) f = dist(mt);
+
+        vector<uint8_t> payload;
+        payload.push_back(0x01);
+        payload.push_back(0x00);
+        payload.push_back(0x00);
+        payload.push_back(0x00);
+
+        const uint8_t* float_bytes = reinterpret_cast<const uint8_t*>(floats.data());
+        payload.insert(payload.end(), float_bytes, float_bytes + (floats.size() * sizeof(float)));
+
+        sendto(udp_sock, reinterpret_cast<const char*>(payload.data()), payload.size(), 0, (sockaddr*)&board_addr, sizeof(board_addr));
+
+        char rx_buf[64];
+        sockaddr_in from;
+        int fromlen = sizeof(from);
+        int n = recvfrom(udp_sock, rx_buf, sizeof(rx_buf), 0, (sockaddr*)&from, &fromlen);
+
+        if (n > 0 && static_cast<uint8_t>(rx_buf[0]) == 0xFF) {
+            send_tcp_message("STATUS:MODEL_OK");
+        } else {
+            send_tcp_message("STATUS:TIMEOUT");
+        }
+    }
+    else if (cmd.find("TEST_STREAM:") == 0) {
+        string args = cmd.substr(12);
+        int delay_ms = 0;
+        try { delay_ms = stoi(args); } catch (...) {}
+
+        if (is_streaming) {
+            is_streaming = false;
+            if (stream_thread.joinable()) stream_thread.join();
+        }
+
+        is_streaming = true;
+        stream_thread = thread(test_stream_task, delay_ms);
     }
 }
 
