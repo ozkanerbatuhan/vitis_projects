@@ -950,7 +950,7 @@
                         xlnx,pcw-nor-grp-sram-cs0-enable = <0x0>;
                         xlnx,pcw-clk1-freq = <0x989680>;
                         xlnx,pcw-mio-48-slew = "slow";
-                        xlnx,pcw-m-axi-gp0-freqmhz = <0x64>;
+                        xlnx,pcw-m-axi-gp0-freqmhz = <0x7d>;
                         xlnx,pcw-ttc0-clk2-peripheral-divisor0 = <0x1>;
                         xlnx,pcw-mio-45-slew = "fast";
                         xlnx,pcw-mio-23-iotype = "LVCMOS , 1.8V";
@@ -1191,10 +1191,10 @@
                         xlnx,pcw-ddr-priority-readport-1 = "<Select>";
                         xlnx,pcw-ddr-priority-readport-2 = "<Select>";
                         xlnx,pcw-en-pjtag = <0x0>;
-                        xlnx,pcw-fclk0-peripheral-divisor0 = <0x5>;
+                        xlnx,pcw-fclk0-peripheral-divisor0 = <0x8>;
                         xlnx,pcw-nor-cs0-t-tr = <0x1>;
                         xlnx,pcw-ddr-priority-readport-3 = "<Select>";
-                        xlnx,pcw-fclk0-peripheral-divisor1 = <0x2>;
+                        xlnx,pcw-fclk0-peripheral-divisor1 = <0x1>;
                         xlnx,pcw-gpio-emio-gpio-io = "<Select>";
                         xlnx,pcw-smc-peripheral-valid = <0x0>;
                         xlnx,pcw-uart1-peripheral-enable = <0x1>;
@@ -1254,7 +1254,7 @@
                         xlnx,pcw-mio-51-slew = "slow";
                         xlnx,pcw-fclk2-peripheral-divisor1 = <0x1>;
                         xlnx,pcw-fpga-fclk2-enable = <0x0>;
-                        xlnx,pcw-clk0-freq = <0x5f5e100>;
+                        xlnx,pcw-clk0-freq = <0x7735940>;
                         xlnx,pcw-mio-47-slew = "slow";
                         xlnx,pcw-sdio-peripheral-divisor0 = <0x14>;
                         xlnx,pcw-use-expanded-iop = <0x0>;
@@ -1288,7 +1288,7 @@
                         xlnx,pcw-uiparam-ddr-dq-0-propogation-delay = <0xa0>;
                         xlnx,pcw-mio-24-slew = "fast";
                         xlnx,pcw-mio-44-direction = "inout";
-                        xlnx,pcw-fpga0-peripheral-freqmhz = <0x64>;
+                        xlnx,pcw-fpga0-peripheral-freqmhz = <0x82>;
                         xlnx,pcw-mio-8-iotype = "LVCMOS , 3.3V";
                         xlnx,pcw-iopll-ctrl-fbdiv = <0x1e>;
                         xlnx,pcw-mio-45-iotype = "LVCMOS , 1.8V";
@@ -1437,7 +1437,7 @@
                         xlnx,pcw-mio-22-direction = "in";
                         xlnx,pcw-mio-47-pullup = "disabled";
                         xlnx,pcw-apu-clk-ratio-enable = "6:2:1";
-                        xlnx,pcw-act-fpga0-peripheral-freqmhz = <0x64>;
+                        xlnx,pcw-act-fpga0-peripheral-freqmhz = <0x7d>;
                         xlnx,pcw-p2f-dmac2-intr = <0x0>;
                         xlnx,pcw-fclk2-peripheral-clksrc = "IO , PLL";
                         xlnx,pcw-usb1-usb1-io = "<Select>";
@@ -1529,7 +1529,7 @@
                         xlnx,pcw-mio-29-pullup = "disabled";
                         xlnx,pcw-mio-30-pullup = "disabled";
                         xlnx,trace-internal-width = <0x2>;
-                        xlnx,pcw-s-axi-hp0-freqmhz = <0x64>;
+                        xlnx,pcw-s-axi-hp0-freqmhz = <0x7d>;
                         xlnx,pcw-mio-7-direction = "out";
                         xlnx,pcw-i2c0-reset-enable = <0x0>;
                         xlnx,pcw-mio-53-slew = "slow";
@@ -1861,7 +1861,7 @@
                         phandle = <0x4e>;
                         compatible = "xlnx,fclk";
                         assigned-clocks = <&clkc 0xf>;
-                        assigned-clock-rates = <0x5f5e100>;
+                        assigned-clock-rates = <0x7bfa480>;
                         #clock-cells = <0x0>;
                         clock-output-names = "fabric_clk";
                         clocks = <&clkc 0xf>;

@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <string.h>
-
+#include "mlp_weight_loader.h"
 #include "xparameters.h"
 #include "netif/xadapter.h"
 #include "lwip/init.h"
@@ -56,22 +56,94 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
 
     if (p == NULL) return;
 
-    /* PC tarafindan Q8.8 (s16) olarak gonderilen veri: 40 x 2 = 80 byte */
-    if (p->tot_len >= MLP_FEATURE_COUNT * sizeof(s16)) {
-        s16 inputs[MLP_FEATURE_COUNT];
-        /* p->payload hizali (aligned) olmayabilir, memcpy ile guvenli kopyalama */
-        memcpy(inputs, p->payload, MLP_FEATURE_COUNT * sizeof(s16));
+    u8 *payload = (u8 *)p->payload;
+    
+    // Ilk Byte komut tipini belirliyor (Header)
+    u8 cmd = payload[0];
 
-        /* MLP inference */
-        u32 result = mlp_predict(inputs);
+    // Trafik Polisi (Header Switch-Case)
+    switch (cmd) {
+        case 0x01:
+        case 'M': {
+            /* DURUM 1: MODEL GÜNCELLEME KOMUTU */
+            
+            // Gelen pakette float hizalamasi (alignment) problemi olmamasi adina
+            // verilerin 4. byte'tan basladigini (1 byte header + 3 byte padding) varsayiyoruz.
+            // Eger direkt 1. byte'tan basliyorsa offset degerini `payload + 1` olarak degistirebilirsiniz.
+            float *model_data = (float *)(payload + 4);
 
-        /* Sonucu geri gonder (1 byte) */
-        struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 1, PBUF_RAM);
-        if (reply != NULL) {
-            ((u8 *)reply->payload)[0] = (u8)result;
-            udp_sendto(pcb, reply, addr, port);
-            pbuf_free(reply);
+            // Payload uzerinden W ve B pointerlarini ilgili katman boyutlarina gore sirayla haritalandir
+            float *W1 = model_data;
+            float *B1 = W1 + (64 * 64);
+            
+            float *W2 = B1 + 64;
+            float *B2 = W2 + (32 * 64);
+            
+            float *W3 = B2 + 32;
+            float *B3 = W3 + (16 * 32);
+            
+            float *W4 = B3 + 16;
+            float *B4 = W4 + (3 * 16);
+
+            // mlp_weight_loader.h icerisindeki donanim guncelleme fonksiyonunu cagir
+            // FPGA'in 192 BRAM kuyusuna yepyeni agirlik ve bias'lari bas!
+            load_default_network(W1, B1, W2, B2, W3, B3, W4, B4);
+
+            // Frontend'e islemin basarili olduguna dair ACK gonder
+            struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 1, PBUF_RAM);
+            if (reply != NULL) {
+                ((u8 *)reply->payload)[0] = 0xFF; // ACK (Tamamlandi)
+                udp_sendto(pcb, reply, addr, port);
+                pbuf_free(reply);
+            }
+            break;
         }
+
+        case 0x02:
+        case 'D': {
+            /* DURUM 2: CANLI HFT VERİSİ */
+            
+            // 64 adet giris ozelligi (Q8.8 formati s16 olarak gonderildigi varsayimiyla)
+            // LwIP payload uzunlugunu kontrol et (4 byte header + 64*2 byte)
+            if (p->tot_len >= 4 + (64 * sizeof(s16))) {
+                s16 inputs[64];
+                
+                // Alignment guvenligi icin memcpy ile array'e kopyala
+                memcpy(inputs, payload + 4, 64 * sizeof(s16));
+
+                if (DmaInitSuccess) {
+                    // Islemci Onbellegini (Cache) RAM'e bosalt ki DMA temiz veriyi okuyabilsin
+                    Xil_DCacheFlushRange((UINTPTR)inputs, 64 * sizeof(s16));
+                    
+                    // DMA ile veriyi dogrudan FPGA'e gonder
+                    XAxiDma_SimpleTransfer(&AxiDma, (UINTPTR)inputs, 64 * sizeof(s16), XAXIDMA_DMA_TO_DEVICE);
+
+                    // Donanimin hesaplamayi bitirmesini bekle (Status register: ornegin 0x04)
+                    int timeout = 0;
+                    while ((mlp_read_reg(MLP_REG_STATUS) & 0x01) == 0) {
+                        timeout++;
+                        if (timeout > 10000000) break; // Sonsuz dongu guvenlik cikisi
+                    }
+
+                    // AXI-Lite uzerinden sonucu oku 
+                    // (Kendi hardware result adresiniz neyse ornegin 0x100 veya 0x0C vb. kullanabilirsiniz)
+                    u32 result = mlp_read_reg(MLP_REG_RESULT);
+
+                    // Okunan Al/Sat kararini (Result) UDP ile geri Frontend'e yolla
+                    struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 1, PBUF_RAM);
+                    if (reply != NULL) {
+                        ((u8 *)reply->payload)[0] = (u8)(result & 0xFF);
+                        udp_sendto(pcb, reply, addr, port);
+                        pbuf_free(reply);
+                    }
+                }
+            }
+            break;
+        }
+
+        default:
+            // Tanimlanmayan bir komut geldiyse (Bozuk paket veya broadcast)
+            break;
     }
 
     pbuf_free(p);
