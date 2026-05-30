@@ -405,7 +405,7 @@
 
 /* Definitions for peripheral MLP_AXI_WRAPPER_0 */
 #define XPAR_MLP_AXI_WRAPPER_0_BASEADDR 0x40000000
-#define XPAR_MLP_AXI_WRAPPER_0_HIGHADDR 0x40000fff
+#define XPAR_MLP_AXI_WRAPPER_0_HIGHADDR 0x4007ffff
 
 /*  BOARD definition */
 #define XPS_BOARD_ZEDBOARD
