@@ -238,8 +238,8 @@ CMAKE_STATIC_LINKER_FLAGS_RELWITHDEBINFO:STRING=
 //Path to a program.
 CMAKE_STRIP:FILEPATH=D:/AMDDesignTools/2025.2/Vitis/gnu/aarch32/nt/gcc-arm-none-eabi/bin/arm-none-eabi-strip.exe
 
-//No help, variable specified on the command line.
-CMAKE_TOOLCHAIN_FILE:UNINITIALIZED=D:/vitis_projects/mlp_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/cortexa9_toolchain.cmake
+//The CMake toolchain file
+CMAKE_TOOLCHAIN_FILE:FILEPATH=D:/vitis_projects/mlp_platform/ps7_cortexa9_0/standalone_ps7_cortexa9_0/bsp/cortexa9_toolchain.cmake
 
 //If this value is on, makefiles will be generated without the
 // .SILENT directive, and all commands will be echoed to the console
@@ -281,7 +281,7 @@ TOOLCHAIN_DEP_FLAGS:STRING= -MMD -MP
 TOOLCHAIN_EXTRA_C_FLAGS:STRING= -O2 -g -Wall -Wextra -fno-tree-loop-distribute-patterns
 
 //Enable Interval Timer
-XILTIMER_en_interval_timer:BOOL=ON
+XILTIMER_en_interval_timer:BOOL=OFF
 
 //This parameter is used to select specific timer for sleep functionality
 XILTIMER_sleep_timer:STRING=Default
@@ -408,7 +408,7 @@ lwip220_default_tcp_recvmbox_size:STRING=200
 lwip220_default_udp_recvmbox_size:STRING=100
 
 //Is DHCP required?
-lwip220_dhcp:BOOL=ON
+lwip220_dhcp:BOOL=OFF
 
 //Debug dhcp protocol
 lwip220_dhcp_debug:BOOL=OFF
@@ -463,7 +463,7 @@ lwip220_ipv6_enable:BOOL=OFF
 lwip220_ipv6_options:BOOL=ON
 
 //ACD check on offered addresses?
-lwip220_lwip_dhcp_does_acd_check:BOOL=ON
+lwip220_lwip_dhcp_does_acd_check:BOOL=OFF
 
 //TCPIP input core locking
 lwip220_lwip_tcpip_core_locking_input:BOOL=OFF
@@ -530,7 +530,7 @@ lwip220_pbuf_link_hlen:STRING=16
 lwip220_pbuf_pool_bufsize:STRING=1700
 
 //Number of buffers in pbuf pool.
-lwip220_pbuf_pool_size:STRING=2048
+lwip220_pbuf_pool_size:STRING=256
 
 //Priority of threads in socket mode
 lwip220_socket_mode_thread_prio:STRING=2
@@ -585,7 +585,7 @@ lwip220_tcpip_mbox_size:STRING=200
 lwip220_temac_emac_number:STRING=0
 
 //link speed as negotiated by the PHY
-lwip220_temac_phy_link_speed:STRING=CONFIG_LINKSPEED100
+lwip220_temac_phy_link_speed:STRING=CONFIG_LINKSPEED_AUTODETECT
 
 //Offload TCP and IP Receive checksum calculation (hardware support
 // required)

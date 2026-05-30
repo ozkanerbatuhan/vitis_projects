@@ -1,21 +1,57 @@
-# Ignore build output directory
-/build
-/export
+# ============================================
+# Vitis / Xilinx Projeleri - .gitignore
+# Sadece kaynak kodlar ve gerekli config dosyalari
+# ============================================
 
-# Ignore object files and dependent files
-.o
-.d
+# --- Xilinx / Vitis Genel ---
+.Xil/
+.rigel_lopper/
+*.log
+*.jou
+*.str
+vivado.log
+vivado.jou
+*.lock
 
-#Ignore logs folder and log files
-/logs
-.log
+# --- IDE ---
+_ide/
+.vscode/
+.settings/
+.metadata/
+.analytics/
 
-#Ignore lock files
-.lock
+# --- Platform Build Çıktıları (mlp_platform) ---
+mlp_platform/export/
+mlp_platform/hw/
+mlp_platform/logs/
+mlp_platform/ps7_cortexa9_0/
+mlp_platform/resources/
+mlp_platform/zynq_fsbl/
 
-.bin
-.pdi
+# --- App Build Çıktıları (lwip_echo_server) ---
+lwip_echo_server/build/
+lwip_echo_server/compile_commands.json
+lwip_echo_server/src/.cache/
+lwip_echo_server/src/.compile_commands/
+lwip_echo_server/src/compile_commands.json
+
+# --- Derlenmiş / Binary Dosyalar ---
+*.o
+*.d
+*.elf
+*.bin
+*.pdi
+*.bit
+*.exe
+
+# --- PC Test Geçici Dosyalar ---
+pc_test/.Xil/
+pc_test/.venv/
+pc_test/execution_log.csv
+pc_test/test_mlp_linux
+
+# --- Vitis Workspace ---
 .vitisWorkspace.json
 
-_ide/logs
-_ide/.wsdata
+# --- XSA (Vivado'dan gelir, büyük dosya) ---
+*.xsa

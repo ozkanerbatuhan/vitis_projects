@@ -67,13 +67,21 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
         case 'M': {
             /* DURUM 1: MODEL GÜNCELLEME KOMUTU */
             
-            // Gelen pakette float hizalamasi (alignment) problemi olmamasi adina
-            // verilerin 4. byte'tan basladigini (1 byte header + 3 byte padding) varsayiyoruz.
-            // Eger direkt 1. byte'tan basliyorsa offset degerini `payload + 1` olarak degistirebilirsiniz.
-            float *model_data = (float *)(payload + 4);
+            // GUVENLIK KONTROLU: Model 6819 adet float bekliyor (27.2 KB). 
+            // Eksik paket gelirse isleme alma.
+            if (p->tot_len < 4 + (6819 * sizeof(float))) {
+                break; // Paketi cope at
+            }
 
-            // Payload uzerinden W ve B pointerlarini ilgili katman boyutlarina gore sirayla haritalandir
-            float *W1 = model_data;
+            // LwIP pbuf ZINCIRLEME (Chained) calisir!
+            // Buyuk paketler (27KB) birden fazla pbuf'a bolunur.
+            // Dogrudan (payload + 4) adresinden sirayla 27KB okumak Data Abort (CPU cokmesi) yaratir.
+            // Bu yuzden LwIP fonksiyonu ile veriyi duz bir DDR dizisine kopyaliyoruz:
+            static float model_buffer[6819];
+            pbuf_copy_partial(p, model_buffer, 6819 * sizeof(float), 4);
+
+            // Artik guvenle tek parca halindeki DDR belleiginden okuyabiliriz:
+            float *W1 = model_buffer;
             float *B1 = W1 + (64 * 64);
             
             float *W2 = B1 + 64;
@@ -86,7 +94,6 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
             float *B4 = W4 + (3 * 16);
 
             // mlp_weight_loader.h icerisindeki donanim guncelleme fonksiyonunu cagir
-            // FPGA'in 192 BRAM kuyusuna yepyeni agirlik ve bias'lari bas!
             load_default_network(W1, B1, W2, B2, W3, B3, W4, B4);
 
             // Frontend'e islemin basarili olduguna dair ACK gonder
@@ -102,37 +109,38 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
         case 0x02:
         case 'D': {
             /* DURUM 2: CANLI HFT VERİSİ */
-            
-            // 64 adet giris ozelligi (Q8.8 formati s16 olarak gonderildigi varsayimiyla)
-            // LwIP payload uzunlugunu kontrol et (4 byte header + 64*2 byte)
             if (p->tot_len >= 4 + (64 * sizeof(s16))) {
-                s16 inputs[64];
-                
-                // Alignment guvenligi icin memcpy ile array'e kopyala
+                static s16 inputs[64] __attribute__((aligned(32)));
                 memcpy(inputs, payload + 4, 64 * sizeof(s16));
 
                 if (DmaInitSuccess) {
-                    // Islemci Onbellegini (Cache) RAM'e bosalt ki DMA temiz veriyi okuyabilsin
+                    // 1. Cache'i RAM'e bosalt ve DMA transferini baslat
                     Xil_DCacheFlushRange((UINTPTR)inputs, 64 * sizeof(s16));
-                    
-                    // DMA ile veriyi dogrudan FPGA'e gonder
-                    XAxiDma_SimpleTransfer(&AxiDma, (UINTPTR)inputs, 64 * sizeof(s16), XAXIDMA_DMA_TO_DEVICE);
+                    int status = XAxiDma_SimpleTransfer(&AxiDma, (UINTPTR)inputs, 64 * sizeof(s16), XAXIDMA_DMA_TO_DEVICE);
 
-                    // Donanimin hesaplamayi bitirmesini bekle (Status register: ornegin 0x04)
-                    int timeout = 0;
-                    while ((mlp_read_reg(MLP_REG_STATUS) & 0x01) == 0) {
-                        timeout++;
-                        if (timeout > 10000000) break; // Sonsuz dongu guvenlik cikisi
+                    if (status == XST_SUCCESS) {
+                        // 2. DONE BEKLEME: Donanimin bitirme hizina yarasir sekilde basit bekleme
+                        while ((mlp_read_reg(0x04) & 0x01) == 0) {
+                            // Sadece bekle, donanim kesme yapana kadar (veya done sinyali gelene kadar)
+                        }
                     }
 
-                    // AXI-Lite uzerinden sonucu oku 
-                    // (Kendi hardware result adresiniz neyse ornegin 0x100 veya 0x0C vb. kullanabilirsiniz)
-                    u32 result = mlp_read_reg(MLP_REG_RESULT);
+                    // 3. ARGMAX HESABI: Sonuclari (SELL, HOLD, BUY skorlarini) ayri ayri oku
+                    s16 out0 = (s16)mlp_read_reg(0x100); // SELL skoru
+                    s16 out1 = (s16)mlp_read_reg(0x104); // HOLD skoru
+                    s16 out2 = (s16)mlp_read_reg(0x108); // BUY skoru
 
-                    // Okunan Al/Sat kararini (Result) UDP ile geri Frontend'e yolla
+                    u8 final_decision = 0; // Varsayilan: SELL
+                    if (out1 > out0 && out1 > out2) {
+                        final_decision = 1; // HOLD
+                    } else if (out2 > out0 && out2 > out1) {
+                        final_decision = 2; // BUY
+                    }
+
+                    // 4. Ag uzerinden Python Arayuzune nihai karari (0, 1, 2) don
                     struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 1, PBUF_RAM);
                     if (reply != NULL) {
-                        ((u8 *)reply->payload)[0] = (u8)(result & 0xFF);
+                        ((u8 *)reply->payload)[0] = final_decision;
                         udp_sendto(pcb, reply, addr, port);
                         pbuf_free(reply);
                     }
@@ -166,6 +174,12 @@ int main(void)
         if (XAxiDma_CfgInitialize(&AxiDma, CfgPtr) == XST_SUCCESS) {
             XAxiDma_IntrDisable(&AxiDma, XAXIDMA_IRQ_ALL_MASK, XAXIDMA_DMA_TO_DEVICE);
             DmaInitSuccess = 1;
+
+            // Donanimi (MLP IP) acilista yalnizca BIR KERE resetle
+            // VHDL Gelistiricisi: Sadece sistemi ilk actiginda 1 yazip hemen ardindan 0 yazmalisin.
+            mlp_write_reg(0x00, 1);
+            for(volatile int i=0; i<1000; i++); // Kisa bir gecikme
+            mlp_write_reg(0x00, 0);
         }
     }
 
