@@ -1,8 +1,12 @@
 # run_echo_test.tcl — lwip_echo_server ELF'i ZedBoard'a yükle ve çalıştır
 connect
 
-# FPGA'yi programla (bitstream)
+# FPGA ve Sistemi tam resetle (MMU fault'u onlemek icin)
 targets -set -filter {name =~ "APU*"}
+rst -system
+after 2000
+
+# FPGA'yi programla (bitstream)
 fpga "D:/vivado projects/hft/hft.runs/impl_1/mlp_system_wrapper.bit"
 
 # PS7 init — Zynq donanımını başlat

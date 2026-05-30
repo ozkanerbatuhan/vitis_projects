@@ -10,9 +10,11 @@
 #include <mutex>
 #include <winsock2.h>
 #include <windows.h>
+#include <mmsystem.h>
 #include <random>
 
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "winmm.lib")
 
 #define FPGA_IP "192.168.1.10"
 #define FPGA_PORT 7000
@@ -104,6 +106,10 @@ void stream_task(string filepath, int delay_ms) {
             if (res == 0) result_str = "SELL";
             else if (res == 1) result_str = "HOLD";
             else if (res == 2) result_str = "BUY";
+            else if (res == 0xDD) {
+                rx_buf[n] = '\0';
+                result_str = string(rx_buf + 1);
+            }
             else result_str = "UNKNOWN";
 
             // IPC: Python Client'a yanit ilet
@@ -179,6 +185,10 @@ void test_stream_task(int delay_ms) {
             if (res == 0) result_str = "SELL";
             else if (res == 1) result_str = "HOLD";
             else if (res == 2) result_str = "BUY";
+            else if (res == 0xDD) {
+                rx_buf[n] = '\0';
+                result_str = string(rx_buf + 1);
+            }
             else result_str = "UNKNOWN";
 
             ostringstream msg;
@@ -282,7 +292,16 @@ void process_command(string cmd) {
         }
     }
     else if (cmd == "TEST_MODEL") {
-        vector<float> floats(576); // Minimal Test Icin Ornek
+        // C++ kodu ilk basta ping atarak FPGA baglantisini kontrol etsin
+        send_tcp_message("STATUS:PING_CHECKING");
+        int ping_res = system("ping -n 1 -w 500 192.168.1.10 > nul");
+        if (ping_res != 0) {
+            send_tcp_message("STATUS:WARNING_PING_FAILED_BUT_TRYING");
+        } else {
+            send_tcp_message("STATUS:PING_OK_SENDING_MODEL");
+        }
+
+        vector<float> floats(6819); // Cok Onemli: Zynq 6819 float bekliyor (Aksi takdirde Data Abort)
         random_device rd;
         mt19937 mt(rd());
         uniform_real_distribution<float> dist(-0.5f, 0.5f);
@@ -326,6 +345,7 @@ void process_command(string cmd) {
 }
 
 int main() {
+    timeBeginPeriod(1); // Windows Scheduler hizlandirmasi (1ms)
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return 1;
 
@@ -404,5 +424,6 @@ int main() {
     closesocket(server_sock);
     closesocket(udp_sock);
     WSACleanup();
+    timeEndPeriod(1);
     return 0;
 }
