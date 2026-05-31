@@ -326,17 +326,22 @@ class HFTFrontendApp(ctk.CTk):
         self.send_command(f"MODEL:{target_file}")
 
     def select_csv_file(self):
-        filepath = filedialog.askopenfilename(filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")])
+        filepath = filedialog.askopenfilename(filetypes=[("Data Files", "*.csv *.parquet"), ("All Files", "*.*")])
         if filepath:
             self.csv_filepath = filepath
             filename = os.path.basename(filepath)
             self.btn_select_csv.configure(text=f"Seçildi: {filename}")
             self.log_message("SETUP", f"Veri dosyası seçildi: {filepath}")
 
+    def reset_ui_on_error(self):
+        self.is_streaming = False
+        self.btn_stream.configure(text="Gerçek Veri Akışını Başlat", fg_color="green", hover_color="darkgreen")
+        self.btn_test_stream.configure(state="normal")
+
     def toggle_stream(self):
         if not self.csv_filepath:
-            self.log_message("ERROR", "Gerçek veri akışı için önce bir CSV dosyası seçmelisiniz!")
-            messagebox.showwarning("Uyarı", "Lütfen önce bir veri (CSV) dosyası seçin!")
+            self.log_message("ERROR", "Gerçek veri akışı için önce bir veri (CSV/Parquet) dosyası seçmelisiniz!")
+            messagebox.showwarning("Uyarı", "Lütfen önce bir veri (CSV/Parquet) dosyası seçin!")
             return
             
         if self.is_streaming:
@@ -350,9 +355,34 @@ class HFTFrontendApp(ctk.CTk):
             self.packet_count = 0
             self.btn_stream.configure(text="Akışı Durdur", fg_color="#c0392b", hover_color="#922b21")
             self.btn_test_stream.configure(state="disabled")
+            
+            stream_target = self.csv_filepath
+            if stream_target.endswith(".parquet"):
+                self.log_message("STREAM", "Parquet dosyası algılandı. Arka planda CSV'ye dönüştürülüyor, lütfen bekleyin...")
+                
+                def convert_and_start():
+                    try:
+                        import pandas as pd
+                        temp_csv = "temp_stream_converted.csv"
+                        pd.read_parquet(stream_target).to_csv(temp_csv, index=False, header=False)
+                        target = os.path.abspath(temp_csv)
+                        self.log_message("STREAM", "Parquet dönüşümü başarılı. Akış başlıyor...")
+                        delay_ms = str(int(self.slider_delay.get()))
+                        self.send_command(f"STREAM:{target}:{delay_ms}")
+                        self.log_message("STREAM", f"Gerçek veri akışı başlatıldı. Gecikme: {delay_ms}ms")
+                    except ImportError:
+                        self.log_message("ERROR", "Pandas veya PyArrow kütüphanesi eksik! (Terminalden 'pip install pandas pyarrow' çalıştırın)")
+                        self.after(0, self.reset_ui_on_error)
+                    except Exception as e:
+                        self.log_message("ERROR", f"Parquet dönüştürme hatası: {e}")
+                        self.after(0, self.reset_ui_on_error)
+
+                threading.Thread(target=convert_and_start, daemon=True).start()
+                return # Thread will handle sending the stream command
+            
             delay_ms = str(int(self.slider_delay.get()))
-            self.send_command(f"STREAM:{self.csv_filepath}:{delay_ms}")
-            self.log_message("STREAM", f"Gerçek veri akışı başlatıldı. Gecikme: {delay_ms}ms, Dosya: {os.path.basename(self.csv_filepath)}")
+            self.send_command(f"STREAM:{stream_target}:{delay_ms}")
+            self.log_message("STREAM", f"Gerçek veri akışı başlatıldı. Gecikme: {delay_ms}ms")
 
     def toggle_test_stream(self):
         if self.is_streaming:
