@@ -12,10 +12,10 @@
 #include <thread>
 #include <vector>
 
-// # Derleme
+// # Build
 // g++ -O2 -o hft_engine_linux hft_engine_linux.cpp -lpthread
-// # Çalıştırma
-//./hft_engine_linux
+// # Run
+// ./hft_engine_linux
 
 // POSIX Sockets
 #include <arpa/inet.h>
@@ -29,11 +29,16 @@
 #define IPC_PORT 5005
 #define UDP_TIMEOUT_MS 2000
 
+// FPGA fixed architecture (must match the Vitis firmware EXACTLY):
+//   W1 64x64, B1 64 | W2 32x64, B2 32 | W3 16x32, B3 16 | W4 3x16, B4 3
+// Total = 6819 float32 values.
+#define FPGA_MODEL_FLOATS 6819
+
 #define LOG_FILENAME "execution_log_linux.csv"
 
 using namespace std;
 
-// Global Thread & Socket Degiskenleri
+// Global thread & socket state
 atomic<bool> is_streaming{false};
 thread stream_thread;
 int udp_sock = -1;
@@ -41,14 +46,14 @@ int tcp_client_sock = -1;
 sockaddr_in board_addr;
 mutex tcp_mutex;
 
-// Yuksek cozunurluklu saat (CLOCK_MONOTONIC, nanosaniye)
+// High-resolution clock (CLOCK_MONOTONIC, nanoseconds)
 static inline uint64_t now_ns() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
 }
 
-// Python arayuzune TCP uzerinden anlik durum/gecikme yollama fonksiyonu
+// Send live status/latency back to the Python frontend over TCP
 void send_tcp_message(const string &msg) {
   lock_guard<mutex> lock(tcp_mutex);
   if (tcp_client_sock >= 0) {
@@ -57,7 +62,7 @@ void send_tcp_message(const string &msg) {
   }
 }
 
-// Canli akisi arka planda donduren is parcacigi (Thread)
+// Background worker thread that streams live data from a file
 void stream_task(string filepath, int delay_ms) {
   ifstream file(filepath);
   if (!file) {
@@ -76,7 +81,7 @@ void stream_task(string filepath, int delay_ms) {
   while (is_streaming && getline(file, line)) {
     if (line.empty())
       continue;
-    // Windows'tan gelen \r temizle
+    // Strip trailing \r coming from Windows-formatted files
     if (!line.empty() && line.back() == '\r')
       line.pop_back();
 
@@ -84,7 +89,7 @@ void stream_task(string filepath, int delay_ms) {
     stringstream ss(line);
     string token;
 
-    // Sayilari virgulle ayikla
+    // Parse comma-separated values
     while (getline(ss, token, ',')) {
       try {
         float val = stof(token);
@@ -93,13 +98,13 @@ void stream_task(string filepath, int delay_ms) {
       }
     }
 
-    // 64'e zero-padding ile tamamla
+    // Zero-pad / truncate to 64 features
     if (q88_features.size() < 64)
       q88_features.resize(64, 0);
     else if (q88_features.size() > 64)
       q88_features.resize(64);
 
-    // Paket (0x02 Header + Padding)
+    // Packet (0x02 header + padding)
     vector<uint8_t> payload;
     payload.push_back(0x02);
     payload.push_back(0x00);
@@ -111,7 +116,7 @@ void stream_task(string filepath, int delay_ms) {
     payload.insert(payload.end(), q88_bytes,
                    q88_bytes + (64 * sizeof(int16_t)));
 
-    // HFT UDP Sinyal Gonderimi ve Mikrosaniye olcumu
+    // HFT UDP signal send + microsecond latency measurement
     uint64_t t0 = now_ns();
     sendto(udp_sock, payload.data(), payload.size(), 0, (sockaddr *)&board_addr,
            sizeof(board_addr));
@@ -132,24 +137,24 @@ void stream_task(string filepath, int delay_ms) {
       uint8_t res = static_cast<uint8_t>(rx_buf[0]);
       string result_str;
       if (res == 0)
-        result_str = "SELL";
-      else if (res == 1)
         result_str = "HOLD";
-      else if (res == 2)
+      else if (res == 1)
         result_str = "BUY";
+      else if (res == 2)
+        result_str = "SELL";
       else if (res == 0xDD) {
         rx_buf[n] = '\0';
         result_str = string(rx_buf + 1);
       } else
         result_str = "UNKNOWN";
 
-      // IPC: Python Client'a yanit ilet
+      // IPC: forward result to the Python client
       ostringstream msg;
       msg << "STATUS:" << result_str << "|LATENCY:" << fixed << setprecision(2)
           << latency_us;
       send_tcp_message(msg.str());
 
-      // Diske hizlica isleyip flushla
+      // Write to disk and flush immediately
       log_file << now_us << "," << fixed << setprecision(2) << latency_us << ","
                << result_str << "\n";
       log_file.flush();
@@ -159,7 +164,7 @@ void stream_task(string filepath, int delay_ms) {
       log_file.flush();
     }
 
-    // Akis hizi beklemesi
+    // Stream pacing delay
     if (delay_ms > 0 && is_streaming) {
       this_thread::sleep_for(chrono::milliseconds(delay_ms));
     }
@@ -171,7 +176,7 @@ void stream_task(string filepath, int delay_ms) {
   is_streaming = false;
 }
 
-// Test akisi icin random veri ureten thread
+// Worker thread that generates random data for test streaming
 void test_stream_task(int delay_ms) {
   ofstream log_file(LOG_FILENAME, ios::app);
   if (log_file.tellp() == 0) {
@@ -219,11 +224,11 @@ void test_stream_task(int delay_ms) {
       uint8_t res = static_cast<uint8_t>(rx_buf[0]);
       string result_str;
       if (res == 0)
-        result_str = "SELL";
-      else if (res == 1)
         result_str = "HOLD";
-      else if (res == 2)
+      else if (res == 1)
         result_str = "BUY";
+      else if (res == 2)
+        result_str = "SELL";
       else if (res == 0xDD) {
         rx_buf[n] = '\0';
         result_str = string(rx_buf + 1);
@@ -255,7 +260,7 @@ void test_stream_task(int delay_ms) {
   is_streaming = false;
 }
 
-// Gelen string komutlarini (MODEL, STREAM, STOP) yonet
+// Handle incoming string commands (MODEL, STREAM, STOP, ...)
 void process_command(string cmd) {
   if (cmd.find("MODEL:") == 0) {
     string filepath = cmd.substr(6);
@@ -289,6 +294,12 @@ void process_command(string cmd) {
       return;
     }
 
+    // Sanity check against the fixed FPGA template size
+    if (floats.size() != FPGA_MODEL_FLOATS) {
+      cout << "[WARN] Model has " << floats.size() << " floats, expected "
+           << FPGA_MODEL_FLOATS << ". Sending anyway." << endl;
+    }
+
     vector<uint8_t> payload;
     payload.push_back(0x01);
     payload.push_back(0x00);
@@ -315,7 +326,7 @@ void process_command(string cmd) {
       send_tcp_message("STATUS:TIMEOUT");
     }
   } else if (cmd.find("STREAM:") == 0) {
-    // STREAM:<csv_yolu>:<gecikme_ms>
+    // STREAM:<csv_path>:<delay_ms>
     string args = cmd.substr(7);
     size_t last_colon = args.find_last_of(':');
     if (last_colon != string::npos) {
@@ -343,7 +354,7 @@ void process_command(string cmd) {
       send_tcp_message("STATUS:STOPPED");
     }
   } else if (cmd == "TEST_MODEL") {
-    // Ping kontrolu (Linux)
+    // Connectivity check (Linux)
     send_tcp_message("STATUS:PING_CHECKING");
     int ping_res = system("ping -c 1 -W 1 192.168.1.10 > /dev/null 2>&1");
     if (ping_res != 0) {
@@ -352,7 +363,7 @@ void process_command(string cmd) {
       send_tcp_message("STATUS:PING_OK_SENDING_MODEL");
     }
 
-    vector<float> floats(6819);
+    vector<float> floats(FPGA_MODEL_FLOATS);
     random_device rd;
     mt19937 mt(rd());
     uniform_real_distribution<float> dist(-0.5f, 0.5f);
@@ -404,14 +415,14 @@ void process_command(string cmd) {
 }
 
 int main() {
-  // UDP Soketi (HFT Veri Gonderimi Icin)
+  // UDP socket (for HFT data transmission)
   udp_sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (udp_sock < 0) {
-    cerr << "UDP soket olusturulamadi!" << endl;
+    cerr << "Failed to create UDP socket!" << endl;
     return 1;
   }
 
-  // Recv timeout (Linux: struct timeval)
+  // Receive timeout (Linux: struct timeval)
   struct timeval tv;
   tv.tv_sec = UDP_TIMEOUT_MS / 1000;
   tv.tv_usec = (UDP_TIMEOUT_MS % 1000) * 1000;
@@ -422,15 +433,15 @@ int main() {
   board_addr.sin_addr.s_addr = inet_addr(FPGA_IP);
   board_addr.sin_port = htons(FPGA_PORT);
 
-  // TCP Soketi (Python IPC Iletisimi Icin Daemon)
+  // TCP socket (daemon for Python IPC communication)
   int server_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (server_sock < 0) {
-    cerr << "TCP soket olusturulamadi!" << endl;
+    cerr << "Failed to create TCP socket!" << endl;
     close(udp_sock);
     return 1;
   }
 
-  // Uygulama kapanip acildiginda portu hizlica yeniden baglayabilmek icin
+  // Allow quick rebind of the port after restart
   int opt = 1;
   setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
@@ -441,18 +452,18 @@ int main() {
   server_addr.sin_port = htons(IPC_PORT);
 
   if (bind(server_sock, (sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-    cout << "TCP Port " << IPC_PORT
-         << " zaten kullanimda! Baska bir hft_engine arkada acik." << endl;
+    cout << "TCP port " << IPC_PORT
+         << " is already in use! Another hft_engine is running." << endl;
     close(server_sock);
     close(udp_sock);
     return 1;
   }
 
   listen(server_sock, 1);
-  cout << "HFT Engine Hazir (Linux Daemon). Port " << IPC_PORT
-       << " uzerinden dinleniyor..." << endl;
+  cout << "HFT Engine ready (Linux daemon). Listening on port " << IPC_PORT
+       << "..." << endl;
 
-  // Python arayuzunden gelen baglantilari bekle
+  // Wait for connections from the Python frontend
   while (true) {
     sockaddr_in client_addr;
     socklen_t client_len = sizeof(client_addr);
@@ -460,14 +471,14 @@ int main() {
         accept(server_sock, (sockaddr *)&client_addr, &client_len);
 
     if (tcp_client_sock >= 0) {
-      cout << "[DAEMON] Python Frontend baglandi." << endl;
+      cout << "[DAEMON] Python frontend connected." << endl;
       char buffer[1024];
 
       while (true) {
         int bytes_received =
             recv(tcp_client_sock, buffer, sizeof(buffer) - 1, 0);
         if (bytes_received <= 0) {
-          cout << "[DAEMON] Baglanti koptu." << endl;
+          cout << "[DAEMON] Connection closed." << endl;
           break;
         }
         buffer[bytes_received] = '\0';

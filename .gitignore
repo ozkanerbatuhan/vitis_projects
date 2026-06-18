@@ -47,7 +47,7 @@ lwip_echo_server/src/compile_commands.json
 # --- PC Test Geçici Dosyalar ---
 pc_test/.Xil/
 pc_test/.venv/
-pc_test/execution_log.csv
+pc_test/*.csv
 pc_test/test_mlp_linux
 
 # --- Vitis Workspace ---
