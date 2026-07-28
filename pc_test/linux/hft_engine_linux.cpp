@@ -1,5 +1,6 @@
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -35,6 +36,32 @@
 #define FPGA_MODEL_FLOATS 6819
 
 #define LOG_FILENAME "execution_log_linux.csv"
+
+/* ── Bit-exact dogrulama destegi ────────────────────────────────────────────
+ * 1) f2q88(): float -> Q8.8 donusumu. Onceki kod static_cast<int16_t> ile
+ *    tasan degerleri SESSIZCE SARMALIYORDU (ornek: BTC fiyati 76834.36 ->
+ *    x256 = 19,669,596 -> int16'da 8796 = "price mod 256"). Artik RTL'in
+ *    kendi saturate() fonksiyonu gibi doyuruyor.
+ * 2) log_filename(): HFT_LOG ortam degiskeni ile kosum basina ayri log
+ *    dosyasi. Motor log'u ios::app ile aciyor; ayni dosyaya tekrar yazmak
+ *    satir hizalamasini bozar ve dogrulamayi anlamsiz kilar.
+ *      HFT_LOG=log_model_new.csv ./hft_engine_linux
+ * ─────────────────────────────────────────────────────────────────────────── */
+static inline int16_t f2q88(float v) {
+  if (!std::isfinite(v))
+    return 0;
+  long x = lrintf(v * 256.0f);
+  if (x > 32767)
+    x = 32767;
+  if (x < -32768)
+    x = -32768;
+  return (int16_t)x;
+}
+
+static const char *log_filename() {
+  const char *e = getenv("HFT_LOG");
+  return (e && *e) ? e : LOG_FILENAME;
+}
 
 using namespace std;
 
@@ -96,7 +123,7 @@ void stream_task(string filepath, int delay_ms) {
     while (getline(ss, token, ',')) {
       try {
         float val = stof(token);
-        q88_features.push_back(static_cast<int16_t>(val * 256.0f));
+        q88_features.push_back(f2q88(val));
       } catch (...) {
       }
     }
@@ -170,6 +197,15 @@ void stream_task(string filepath, int delay_ms) {
       } else {
         log_file << ",,,,,";
       }
+      /* Firmware yamasi: reply = [karar][5x u32 tick][3x s16 logit] = 27 bayt */
+      if (n >= 27) {
+        int16_t outs[3];
+        memcpy(outs, rx_buf + 21, sizeof(outs));
+        for (int k = 0; k < 3; k++)
+          log_file << "," << outs[k];
+      } else {
+        log_file << ",,,";
+      }
       log_file << "\n";
       log_file.flush();
     } else {
@@ -192,10 +228,11 @@ void stream_task(string filepath, int delay_ms) {
 
 // Worker thread that generates random data for test streaming
 void test_stream_task(int delay_ms) {
-  ofstream log_file(LOG_FILENAME, ios::app);
+  ofstream log_file(log_filename(), ios::app);
   if (log_file.tellp() == 0) {
     log_file << "Timestamp_us,Latency_us,Result,"
-                "recv_ticks,parse_ticks,dma_ticks,pl_ticks,read_ticks\n";
+                "recv_ticks,parse_ticks,dma_ticks,pl_ticks,read_ticks,"
+                "out0,out1,out2\n";
   }
 
   random_device rd;
@@ -205,7 +242,7 @@ void test_stream_task(int delay_ms) {
   while (is_streaming) {
     vector<int16_t> q88_features(64);
     for (int i = 0; i < 64; ++i) {
-      q88_features[i] = static_cast<int16_t>(dist(mt) * 256.0f);
+      q88_features[i] = f2q88(dist(mt));
     }
 
     vector<uint8_t> payload;
@@ -265,6 +302,15 @@ void test_stream_task(int delay_ms) {
           log_file << "," << stg[k];
       } else {
         log_file << ",,,,,";
+      }
+      /* Firmware yamasi: reply = [karar][5x u32 tick][3x s16 logit] = 27 bayt */
+      if (n >= 27) {
+        int16_t outs[3];
+        memcpy(outs, rx_buf + 21, sizeof(outs));
+        for (int k = 0; k < 3; k++)
+          log_file << "," << outs[k];
+      } else {
+        log_file << ",,,";
       }
       log_file << "\n";
       log_file.flush();

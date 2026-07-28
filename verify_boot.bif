@@ -1,0 +1,19 @@
+//arch = zynq; split = false; format = BIN
+// Bit-exact dogrulama kosumu icin boot imaji.
+// Uc bilesenin de 2026-07-28 tarihli guncel surumleri kullanilir.
+//   fsbl      : 16:22
+//   bitstream : 16:19  md5 febd2af9  (yeniden sentezden, ic tarih 07/28 15:43)
+//   uygulama  : 16:22  (27 baytlik logit yanitli yamali firmware)
+//
+// Uretim:
+//   cd D:\vitis_projects
+//   bootgen -image verify_boot.bif -arch zynq -o BOOT.bin -w on
+//
+// Kontrol: BOOT.bin ~4.8 MB olmali. 1.3 MB cikarsa bitstream paketlenmemistir.
+
+the_ROM_image:
+{
+	[bootloader]D:\vitis_projects\mlp_platform\export\mlp_platform\sw\boot\fsbl.elf
+	D:\vitis_projects\lwip_echo_server\_ide\bitstream\mlp_system_wrapper.bit
+	D:\vitis_projects\lwip_echo_server\build\lwip_echo_server.elf
+}

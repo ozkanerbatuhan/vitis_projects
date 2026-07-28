@@ -1,7 +1,0 @@
-//arch = zynq; split = false; format = BIN
-the_ROM_image:
-{
-	[bootloader]D:\vitis_projects\mlp_platform\export\mlp_platform\sw\boot\fsbl.elf
-	D:\vitis_projects\mlp_platform\export\mlp_platform\hw\mlp_system_wrapper.bit
-	D:\vitis_projects\lwip_echo_server\build\lwip_echo_server.elf
-}

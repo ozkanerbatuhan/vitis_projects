@@ -194,7 +194,11 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
                     //     Min Ethernet frame zaten 60B oldugu icin tel maliyeti ~0;
                     //     UART hot path'te YOK -> tam hizda olcum.)
 #if ENABLE_STAGE_TIMING
-                    struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 21, PBUF_RAM);
+                    /* 27 bayt: [karar][5x u32 tick][3x s16 ham logit]
+                     * Logitler bit-exact dogrulama icin. Min Ethernet frame
+                     * zaten 60B oldugu icin 21->27 tel maliyeti sifir;
+                     * gecikme olcumleri etkilenmez. */
+                    struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 27, PBUF_RAM);
                     if (reply != NULL) {
                         u8 *rp = (u8 *)reply->payload;
                         rp[0] = final_decision;
@@ -205,6 +209,9 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
                         stg[3] = (u32)(t_pl    - t_dma);     /* stream RX + MLP  */
                         stg[4] = (u32)(t_read  - t_pl);      /* AXI-Lite readout */
                         memcpy(rp + 1, stg, sizeof(stg));    /* little-endian    */
+                        /* Ham cikis logitleri (SELL, HOLD, BUY) */
+                        s16 outs[3] = { out0, out1, out2 };
+                        memcpy(rp + 21, outs, sizeof(outs));
                         udp_sendto(pcb, reply, addr, port);
                         pbuf_free(reply);
                     }
