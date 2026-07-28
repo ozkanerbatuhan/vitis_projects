@@ -103,9 +103,10 @@ void stream_task(string filepath, int delay_ms) {
         if (n > 0) {
             uint8_t res = static_cast<uint8_t>(rx_buf[0]);
             string result_str;
-            if (res == 0) result_str = "HOLD";
-            else if (res == 1) result_str = "BUY";
-            else if (res == 2) result_str = "SELL";
+            /* Firmware (main.c) encoding: 0=SELL, 1=HOLD, 2=BUY */
+            if (res == 0) result_str = "SELL";
+            else if (res == 1) result_str = "HOLD";
+            else if (res == 2) result_str = "BUY";
             else if (res == 0xDD) {
                 rx_buf[n] = '\0';
                 result_str = string(rx_buf + 1);
@@ -182,9 +183,10 @@ void test_stream_task(int delay_ms) {
         if (n > 0) {
             uint8_t res = static_cast<uint8_t>(rx_buf[0]);
             string result_str;
-            if (res == 0) result_str = "HOLD";
-            else if (res == 1) result_str = "BUY";
-            else if (res == 2) result_str = "SELL";
+            /* Firmware (main.c) encoding: 0=SELL, 1=HOLD, 2=BUY */
+            if (res == 0) result_str = "SELL";
+            else if (res == 1) result_str = "HOLD";
+            else if (res == 2) result_str = "BUY";
             else if (res == 0xDD) {
                 rx_buf[n] = '\0';
                 result_str = string(rx_buf + 1);

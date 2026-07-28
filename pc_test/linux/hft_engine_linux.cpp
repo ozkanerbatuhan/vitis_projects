@@ -73,7 +73,10 @@ void stream_task(string filepath, int delay_ms) {
 
   ofstream log_file(LOG_FILENAME, ios::app);
   if (log_file.tellp() == 0) {
-    log_file << "Timestamp_us,Latency_us,Result\n";
+    // stage tick columns are filled only when the firmware is built with
+    // ENABLE_STAGE_TIMING (21-byte reply); otherwise left empty
+    log_file << "Timestamp_us,Latency_us,Result,"
+                "recv_ticks,parse_ticks,dma_ticks,pl_ticks,read_ticks\n";
   }
 
   string line;
@@ -136,12 +139,13 @@ void stream_task(string filepath, int delay_ms) {
     if (n > 0) {
       uint8_t res = static_cast<uint8_t>(rx_buf[0]);
       string result_str;
+      /* Firmware (main.c) encoding: 0=SELL, 1=HOLD, 2=BUY */
       if (res == 0)
-        result_str = "HOLD";
-      else if (res == 1)
-        result_str = "BUY";
-      else if (res == 2)
         result_str = "SELL";
+      else if (res == 1)
+        result_str = "HOLD";
+      else if (res == 2)
+        result_str = "BUY";
       else if (res == 0xDD) {
         rx_buf[n] = '\0';
         result_str = string(rx_buf + 1);
@@ -156,7 +160,17 @@ void stream_task(string filepath, int delay_ms) {
 
       // Write to disk and flush immediately
       log_file << now_us << "," << fixed << setprecision(2) << latency_us << ","
-               << result_str << "\n";
+               << result_str;
+      // ENABLE_STAGE_TIMING firmware: reply = [decision][5x u32 LE ticks]
+      if (n >= 21) {
+        uint32_t stg[5];
+        memcpy(stg, rx_buf + 1, sizeof(stg));
+        for (int k = 0; k < 5; k++)
+          log_file << "," << stg[k];
+      } else {
+        log_file << ",,,,,";
+      }
+      log_file << "\n";
       log_file.flush();
     } else {
       send_tcp_message("STATUS:TIMEOUT");
@@ -180,7 +194,8 @@ void stream_task(string filepath, int delay_ms) {
 void test_stream_task(int delay_ms) {
   ofstream log_file(LOG_FILENAME, ios::app);
   if (log_file.tellp() == 0) {
-    log_file << "Timestamp_us,Latency_us,Result\n";
+    log_file << "Timestamp_us,Latency_us,Result,"
+                "recv_ticks,parse_ticks,dma_ticks,pl_ticks,read_ticks\n";
   }
 
   random_device rd;
@@ -223,12 +238,13 @@ void test_stream_task(int delay_ms) {
     if (n > 0) {
       uint8_t res = static_cast<uint8_t>(rx_buf[0]);
       string result_str;
+      /* Firmware (main.c) encoding: 0=SELL, 1=HOLD, 2=BUY */
       if (res == 0)
-        result_str = "HOLD";
-      else if (res == 1)
-        result_str = "BUY";
-      else if (res == 2)
         result_str = "SELL";
+      else if (res == 1)
+        result_str = "HOLD";
+      else if (res == 2)
+        result_str = "BUY";
       else if (res == 0xDD) {
         rx_buf[n] = '\0';
         result_str = string(rx_buf + 1);
@@ -241,7 +257,16 @@ void test_stream_task(int delay_ms) {
       send_tcp_message(msg.str());
 
       log_file << now_us << "," << fixed << setprecision(2) << latency_us << ","
-               << result_str << "\n";
+               << result_str;
+      if (n >= 21) {
+        uint32_t stg[5];
+        memcpy(stg, rx_buf + 1, sizeof(stg));
+        for (int k = 0; k < 5; k++)
+          log_file << "," << stg[k];
+      } else {
+        log_file << ",,,,,";
+      }
+      log_file << "\n";
       log_file.flush();
     } else {
       send_tcp_message("STATUS:TIMEOUT");

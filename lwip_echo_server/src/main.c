@@ -13,6 +13,40 @@
 #include "platform_config.h"
 #include "mlp_driver.h"
 
+/* ── Per-stage latency instrumentation (paper Table 2 / Table 10) ──
+ * Set to 0 to compile the original hot path with zero overhead.
+ * Timing is embedded in the UDP reply (1 -> 21 bytes:
+ *   [0]=decision, then 5x u32 LE Global-Timer ticks: recv,parse,dma,pl,read)
+ * so it runs at FULL line rate — no UART in the hot path.
+ * Tick rate = COUNTS_PER_SECOND (Zynq-7000: CPU/2), printed once at boot.
+ * Parse the engine's extended CSV with pc_test/parse_stage_timing.py          */
+#define ENABLE_STAGE_TIMING 1
+
+#if ENABLE_STAGE_TIMING
+/* 2025.2 SDT platformu xtime_l.h'yi export etmiyor -> Zynq-7000 Global
+ * Timer'i (PERIPHBASE+0x200) dogrudan okuyoruz. 64-bit sayaç, CPU_CLK/2. */
+#include "xil_io.h"
+#define GT_BASE        0xF8F00200U
+#define GT_CNT_LO      (GT_BASE + 0x00U)
+#define GT_CNT_HI      (GT_BASE + 0x04U)
+#define GT_CTRL        (GT_BASE + 0x08U)
+#define GT_TICK_HZ     (XPAR_CPU_CORE_CLOCK_FREQ_HZ / 2U)  /* ~333.333 MHz */
+
+typedef u64 XTime;
+static inline void XTime_GetTime(XTime *t) {
+    u32 hi, lo;
+    do {                       /* hi/lo/hi: 32-bit tasma yarisina karsi */
+        hi = Xil_In32(GT_CNT_HI);
+        lo = Xil_In32(GT_CNT_LO);
+    } while (Xil_In32(GT_CNT_HI) != hi);
+    *t = (((u64)hi) << 32) | lo;
+}
+static inline void gt_enable(void) {
+    Xil_Out32(GT_CTRL, Xil_In32(GT_CTRL) | 0x1U);  /* bit0 = timer enable */
+}
+static XTime g_t_poll;      /* taken in main loop right before xemacif_input */
+#endif
+
 /* ── Ağ Ayarları ── */
 #define BOARD_IP_0      192
 #define BOARD_IP_1      168
@@ -110,25 +144,43 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
         case 'D': {
             /* DURUM 2: CANLI HFT VERİSİ */
             if (p->tot_len >= 4 + (64 * sizeof(s16))) {
+#if ENABLE_STAGE_TIMING
+                XTime t_cb, t_parse, t_dma, t_pl, t_read;
+                XTime_GetTime(&t_cb);   /* paket lwIP buffer'inda hazir */
+#endif
                 static s16 inputs[64] __attribute__((aligned(32)));
                 memcpy(inputs, payload + 4, 64 * sizeof(s16));
+#if ENABLE_STAGE_TIMING
+                XTime_GetTime(&t_parse); /* parse / feature-prep bitti */
+#endif
 
                 if (DmaInitSuccess) {
                     // 1. Cache'i RAM'e bosalt ve DMA transferini baslat
                     Xil_DCacheFlushRange((UINTPTR)inputs, 64 * sizeof(s16));
                     int status = XAxiDma_SimpleTransfer(&AxiDma, (UINTPTR)inputs, 64 * sizeof(s16), XAXIDMA_DMA_TO_DEVICE);
 
+#if ENABLE_STAGE_TIMING
+                    /* MM2S kanali bosalana kadar: PS->PL DMA transfer suresi */
+                    while (XAxiDma_Busy(&AxiDma, XAXIDMA_DMA_TO_DEVICE)) { }
+                    XTime_GetTime(&t_dma);
+#endif
                     if (status == XST_SUCCESS) {
                         // 2. DONE BEKLEME: Donanimin bitirme hizina yarasir sekilde basit bekleme
                         while ((mlp_read_reg(0x04) & 0x01) == 0) {
                             // Sadece bekle, donanim kesme yapana kadar (veya done sinyali gelene kadar)
                         }
                     }
+#if ENABLE_STAGE_TIMING
+                    XTime_GetTime(&t_pl);   /* AXI-Stream alimi + MLP hesabi bitti */
+#endif
 
                     // 3. ARGMAX HESABI: Sonuclari (SELL, HOLD, BUY skorlarini) ayri ayri oku
                     s16 out0 = (s16)mlp_read_reg(0x100); // SELL skoru
                     s16 out1 = (s16)mlp_read_reg(0x104); // HOLD skoru
                     s16 out2 = (s16)mlp_read_reg(0x108); // BUY skoru
+#if ENABLE_STAGE_TIMING
+                    XTime_GetTime(&t_read); /* AXI-Lite result readout bitti */
+#endif
 
                     u8 final_decision = 0; // Varsayilan: SELL
                     if (out1 > out0 && out1 > out2) {
@@ -138,12 +190,32 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
                     }
 
                     // 4. Ag uzerinden Python Arayuzune nihai karari (0, 1, 2) don
+                    //    (ENABLE_STAGE_TIMING: karar + 5x u32 tick, toplam 21 bayt.
+                    //     Min Ethernet frame zaten 60B oldugu icin tel maliyeti ~0;
+                    //     UART hot path'te YOK -> tam hizda olcum.)
+#if ENABLE_STAGE_TIMING
+                    struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 21, PBUF_RAM);
+                    if (reply != NULL) {
+                        u8 *rp = (u8 *)reply->payload;
+                        rp[0] = final_decision;
+                        u32 stg[5];
+                        stg[0] = (u32)(t_cb    - g_t_poll);  /* recv: EMAC+lwIP  */
+                        stg[1] = (u32)(t_parse - t_cb);      /* parse/memcpy     */
+                        stg[2] = (u32)(t_dma   - t_parse);   /* AXI-DMA MM2S     */
+                        stg[3] = (u32)(t_pl    - t_dma);     /* stream RX + MLP  */
+                        stg[4] = (u32)(t_read  - t_pl);      /* AXI-Lite readout */
+                        memcpy(rp + 1, stg, sizeof(stg));    /* little-endian    */
+                        udp_sendto(pcb, reply, addr, port);
+                        pbuf_free(reply);
+                    }
+#else
                     struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 1, PBUF_RAM);
                     if (reply != NULL) {
                         ((u8 *)reply->payload)[0] = final_decision;
                         udp_sendto(pcb, reply, addr, port);
                         pbuf_free(reply);
                     }
+#endif
                 }
             }
             break;
@@ -213,7 +285,18 @@ int main(void)
 
     udp_recv(udp_pcb, udp_recv_callback, NULL);
 
+#if ENABLE_STAGE_TIMING
+    gt_enable();  /* Global Timer'i calistir (xiltimer BSP'de kapali olabilir) */
+    /* Parser icin tick frekansini bir kere bildir (Zynq-7000: CPU_FREQ/2) */
+    xil_printf("TIMFREQ,%u\r\n", (u32)GT_TICK_HZ);
+#endif
+
     while (1) {
+#if ENABLE_STAGE_TIMING
+        /* Frame'i EMAC'ten cekmeden hemen once damga: recv sutunu
+         * = EMAC DMA + lwIP stack isleme suresi (NIC -> UDP buffer) */
+        XTime_GetTime(&g_t_poll);
+#endif
         xemacif_input(netif_ptr);
     }
     cleanup_platform();

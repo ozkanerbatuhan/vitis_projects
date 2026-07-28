@@ -1,0 +1,13 @@
+Bugünkü koşunun uçtan uca sonucu (509k paket, tam hız): mean 68.4 µs, p50 68.2, p99 82.5, min 52.0 µs — Table 9'daki 66.3 µs ile tutarlı, board ve yeni firmware düzgün çalışıyor görünüyor.
+Stage ölçümünü almak için eksik tek adım — engine'i yeniden derle (Linux engine'i nerede çalıştırıyorsan orada, WSL ise WSL'de):
+cd /mnt/d/vitis_projects/pc_test/linux
+g++ -O2 -o hft_engine_linux hft_engine_linux.cpp -lpthread
+Sonra:
+
+Karışmasın diye mevcut logu arşivle: mv execution_log_linux.csv execution_log_legacy.csv (içinde eski + bugünkü permütasyonlu etiketli satırlar var).
+Yeni engine'le stream'i tekrar başlat — 1-2 dakika yeter (yüz binlerce paket).
+İlk satırları kontrol et: başlıkta recv_ticks,... ve satırlarda 8 alan görmelisin. Hâlâ 3 alan + boş virgüller görürsen board eski firmware'dedir (ama BOOT.bin 13:48'de yenilendiğine göre beklemiyorum).
+python3 parse_stage_timing.py execution_log_linux.csv --freq 333333343 → Table 2/10 Measured hücreleri.
+python3 ../quantization_analysis.py --log linux/execution_log_linux.csv --fixed-log → Table 4'ün yeni koşuyla teyidi.
+
+Parser çıktısını yapıştır, tablo hücrelerine yerleştireyim.
