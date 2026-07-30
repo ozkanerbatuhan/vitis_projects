@@ -37,14 +37,15 @@
 
 #define LOG_FILENAME "execution_log_linux.csv"
 
-/* ── Bit-exact dogrulama destegi ────────────────────────────────────────────
- * 1) f2q88(): float -> Q8.8 donusumu. Onceki kod static_cast<int16_t> ile
- *    tasan degerleri SESSIZCE SARMALIYORDU (ornek: BTC fiyati 76834.36 ->
- *    x256 = 19,669,596 -> int16'da 8796 = "price mod 256"). Artik RTL'in
- *    kendi saturate() fonksiyonu gibi doyuruyor.
- * 2) log_filename(): HFT_LOG ortam degiskeni ile kosum basina ayri log
- *    dosyasi. Motor log'u ios::app ile aciyor; ayni dosyaya tekrar yazmak
- *    satir hizalamasini bozar ve dogrulamayi anlamsiz kilar.
+/* ── Support for bit-exact verification ─────────────────────────────────────
+ * 1) f2q88(): float to Q8.8 conversion. The previous code used
+ *    static_cast<int16_t>, which wrapped out-of-range values SILENTLY: a BTC
+ *    price of 76834.36 times 256 is 19,669,596, which becomes 8796 in an
+ *    int16, i.e. price modulo 256. This now saturates the way the RTL's own
+ *    saturate() does.
+ * 2) log_filename(): the HFT_LOG environment variable gives each run its own
+ *    log file. The engine opens the log with ios::app, so writing to the same
+ *    file twice breaks row alignment and makes verification meaningless.
  *      HFT_LOG=log_model_new.csv ./hft_engine_linux
  * ─────────────────────────────────────────────────────────────────────────── */
 static inline int16_t f2q88(float v) {
@@ -98,12 +99,13 @@ void stream_task(string filepath, int delay_ms) {
     return;
   }
 
-  ofstream log_file(LOG_FILENAME, ios::app);
+  ofstream log_file(log_filename(), ios::app);
   if (log_file.tellp() == 0) {
     // stage tick columns are filled only when the firmware is built with
-    // ENABLE_STAGE_TIMING (21-byte reply); otherwise left empty
+    // ENABLE_STAGE_TIMING; out0..2 and cycles need the extended 29-byte reply
     log_file << "Timestamp_us,Latency_us,Result,"
-                "recv_ticks,parse_ticks,dma_ticks,pl_ticks,read_ticks\n";
+                "recv_ticks,parse_ticks,dma_ticks,pl_ticks,read_ticks,"
+                "out0,out1,out2,cycles\n";
   }
 
   string line;
@@ -197,7 +199,7 @@ void stream_task(string filepath, int delay_ms) {
       } else {
         log_file << ",,,,,";
       }
-      /* Firmware yamasi: reply = [karar][5x u32 tick][3x s16 logit] = 27 bayt */
+      /* Extended reply: [decision][5x u32 ticks][3x s16 logits] = 27 bytes */
       if (n >= 27) {
         int16_t outs[3];
         memcpy(outs, rx_buf + 21, sizeof(outs));
@@ -205,6 +207,14 @@ void stream_task(string filepath, int delay_ms) {
           log_file << "," << outs[k];
       } else {
         log_file << ",,,";
+      }
+      /* PL cycle counter, appended by the firmware (29-byte reply) */
+      if (n >= 29) {
+        uint16_t cyc;
+        memcpy(&cyc, rx_buf + 27, sizeof(cyc));
+        log_file << "," << cyc;
+      } else {
+        log_file << ",";
       }
       log_file << "\n";
       log_file.flush();
@@ -232,7 +242,7 @@ void test_stream_task(int delay_ms) {
   if (log_file.tellp() == 0) {
     log_file << "Timestamp_us,Latency_us,Result,"
                 "recv_ticks,parse_ticks,dma_ticks,pl_ticks,read_ticks,"
-                "out0,out1,out2\n";
+                "out0,out1,out2,cycles\n";
   }
 
   random_device rd;
@@ -303,7 +313,7 @@ void test_stream_task(int delay_ms) {
       } else {
         log_file << ",,,,,";
       }
-      /* Firmware yamasi: reply = [karar][5x u32 tick][3x s16 logit] = 27 bayt */
+      /* Extended reply: [decision][5x u32 ticks][3x s16 logits] = 27 bytes */
       if (n >= 27) {
         int16_t outs[3];
         memcpy(outs, rx_buf + 21, sizeof(outs));
@@ -311,6 +321,14 @@ void test_stream_task(int delay_ms) {
           log_file << "," << outs[k];
       } else {
         log_file << ",,,";
+      }
+      /* PL cycle counter, appended by the firmware (29-byte reply) */
+      if (n >= 29) {
+        uint16_t cyc;
+        memcpy(&cyc, rx_buf + 27, sizeof(cyc));
+        log_file << "," << cyc;
+      } else {
+        log_file << ",";
       }
       log_file << "\n";
       log_file.flush();

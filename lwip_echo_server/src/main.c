@@ -12,7 +12,6 @@
 #include "platform.h"
 #include "platform_config.h"
 #include "mlp_driver.h"
-
 /* ── Per-stage latency instrumentation (paper Table 2 / Table 10) ──
  * Set to 0 to compile the original hot path with zero overhead.
  * Timing is embedded in the UDP reply (1 -> 21 bytes:
@@ -23,8 +22,8 @@
 #define ENABLE_STAGE_TIMING 1
 
 #if ENABLE_STAGE_TIMING
-/* 2025.2 SDT platformu xtime_l.h'yi export etmiyor -> Zynq-7000 Global
- * Timer'i (PERIPHBASE+0x200) dogrudan okuyoruz. 64-bit sayaç, CPU_CLK/2. */
+/* The 2025.2 SDT platform does not export xtime_l.h, so the Zynq-7000
+ * Global Timer at PERIPHBASE+0x200 is read directly. 64-bit, CPU_CLK/2. */
 #include "xil_io.h"
 #define GT_BASE        0xF8F00200U
 #define GT_CNT_LO      (GT_BASE + 0x00U)
@@ -42,12 +41,169 @@ static inline void XTime_GetTime(XTime *t) {
     *t = (((u64)hi) << 32) | lo;
 }
 static inline void gt_enable(void) {
-    Xil_Out32(GT_CTRL, Xil_In32(GT_CTRL) | 0x1U);  /* bit0 = timer enable */
+    Xil_Out32(GT_CTRL, Xil_In32(GT_CTRL) | 0x1U);  /* bit 0 = timer enable */
 }
 static XTime g_t_poll;      /* taken in main loop right before xemacif_input */
 #endif
 
-/* ── Ağ Ayarları ── */
+/* ── ARM (Cortex-A9) software inference baseline ───────────────────────────
+ * Runs the same network on the PS with the same Q8.8 arithmetic. This
+ * measures the premise of the design directly: the fabric core takes
+ * 768 ns, so how long does the same work take on the processor?
+ * Runs on the board with no DMA and no network involvement.
+ * Printed once at boot; never called from the hot path.
+ * ───────────────────────────────────────────────────────────────────────── */
+#define ARM_L1 64
+#define ARM_L2 32
+#define ARM_L3 16
+#define ARM_L4  3
+
+static s16 arm_a0[64], arm_a1[64], arm_a2[64];
+
+static inline s16 arm_sat(s32 v) {
+    if (v >  32767) return  32767;
+    if (v < -32768) return -32768;
+    return (s16)v;
+}
+
+/* Q8.8 weight tables, filled in when a model is loaded */
+static s16 armW1[ARM_L1*64], armB1[ARM_L1];
+static s16 armW2[ARM_L2*64], armB2[ARM_L2];
+static s16 armW3[ARM_L3*32], armB3[ARM_L3];
+static s16 armW4[ARM_L4*16], armB4[ARM_L4];
+static int arm_weights_ready = 0;
+
+/* One layer: n_out neurons, n_in inputs, Q8.8, >>8, saturate, optional ReLU.
+ * Follows the same order as the RTL so that both paths produce identical
+ * values.
+ *
+ * Important: Vitis compiles the application at -O0 by default. An
+ * unoptimized software baseline would make the comparison unfair, so the
+ * attribute below forces -O3 on these two functions regardless of the
+ * global flag. The processor therefore does its best and the comparison
+ * stays defensible. */
+__attribute__((optimize("O3")))
+static void arm_layer(const s16 *in, s16 *out, const s16 *W, const s16 *B,
+                      int n_out, int n_in, int relu) {
+    int j, i;
+    for (j = 0; j < n_out; j++) {
+        s64 acc = ((s64)B[j]) << 8;
+        const s16 *w = W + (u32)j * (u32)n_in;
+        for (i = 0; i < n_in; i++)
+            acc += (s32)in[i] * (s32)w[i];
+        s16 o = arm_sat((s32)(acc >> 8));
+        if (relu && o < 0) o = 0;
+        out[j] = o;
+    }
+}
+
+__attribute__((optimize("O3")))
+static u32 arm_infer_once(const s16 *x) {
+    s16 o0, o1, o2;
+    arm_layer(x,      arm_a0, armW1, armB1, ARM_L1, 64, 1);
+    arm_layer(arm_a0, arm_a1, armW2, armB2, ARM_L2, 64, 1);
+    arm_layer(arm_a1, arm_a2, armW3, armB3, ARM_L3, 32, 1);
+    arm_layer(arm_a2, arm_a0, armW4, armB4, ARM_L4, 16, 0);
+    o0 = arm_a0[0]; o1 = arm_a0[1]; o2 = arm_a0[2];
+    if (o1 > o0 && o1 > o2) return 1;
+    if (o2 > o0 && o2 > o1) return 2;
+    return 0;
+}
+
+#define ARM_DIST_MAX 1000
+static u32 arm_dist[ARM_DIST_MAX];
+
+/* Insertion sort: n <= 1000, called once at boot, speed is irrelevant. */
+static void arm_sort_u32(u32 *a, int n) {
+    int i, j;
+    for (i = 1; i < n; i++) {
+        u32 v = a[i];
+        for (j = i - 1; j >= 0 && a[j] > v; j--) a[j + 1] = a[j];
+        a[j + 1] = v;
+    }
+}
+
+/* Runs n_iter inferences and prints the mean ns per inference to the UART.
+ * synth: 1 for synthetic weights (boot), 0 for real model weights.
+ * %s is avoided for the label: xil_printf is a lightweight printf whose
+ * format support varies between releases, so two literal formats are safer. */
+static void arm_baseline_report(int n_iter, int synth) {
+#if ENABLE_STAGE_TIMING
+    static s16 x[64];
+    XTime t0, t1;
+    u64 ticks;
+    u32 ns_per, sink = 0;
+    int k;
+
+    if (!arm_weights_ready) {
+        xil_printf("ARM baseline: weights not loaded yet\r\n");
+        return;
+    }
+    for (k = 0; k < 64; k++) x[k] = (s16)((k * 137) % 511 - 255);
+
+    xil_printf("ARM baseline: starting measurement (%d iterations)\r\n", n_iter);
+    arm_infer_once(x);                       /* warm the cache */
+    XTime_GetTime(&t0);
+    for (k = 0; k < n_iter; k++) sink += arm_infer_once(x);
+    XTime_GetTime(&t1);
+
+    ticks  = (u64)(t1 - t0);
+    ns_per = (u32)((ticks * 1000000000ULL) / ((u64)GT_TICK_HZ * (u64)n_iter));
+
+    /* Second pass: time each inference individually to obtain the distribution.
+     * The hardware cycle counter shows a single-valued distribution, so
+     * reporting min/p50/p99/max alongside the mean keeps the software side
+     * on the same footing. The instrumentation overhead is two timer reads
+     * per inference, on the order of one percent of the measured interval. */
+    if (n_iter > ARM_DIST_MAX) n_iter = ARM_DIST_MAX;
+    for (k = 0; k < n_iter; k++) {
+        XTime a, b;
+        XTime_GetTime(&a);
+        sink += arm_infer_once(x);
+        XTime_GetTime(&b);
+        arm_dist[k] = (u32)(((u64)(b - a) * 1000000000ULL) / (u64)GT_TICK_HZ);
+    }
+    arm_sort_u32(arm_dist, n_iter);
+    xil_printf("ARM baseline dist: min=%u p50=%u p99=%u max=%u ns (n=%d)\r\n",
+               (unsigned)arm_dist[0],
+               (unsigned)arm_dist[n_iter / 2],
+               (unsigned)arm_dist[(n_iter * 99) / 100],
+               (unsigned)arm_dist[n_iter - 1], n_iter);
+    if (synth)
+        xil_printf("ARM baseline [synthetic]: %d inferences, %u ns each (sink=%u)\r\n",
+                   n_iter, (unsigned)ns_per, (unsigned)sink);
+    else
+        xil_printf("ARM baseline [model]: %d inferences, %u ns each (sink=%u)\r\n",
+                   n_iter, (unsigned)ns_per, (unsigned)sink);
+#else
+    (void)n_iter; (void)synth;
+#endif
+}
+
+/* Boot-time variant that runs without a model being loaded.
+ *
+ * Latency does not depend on the weight VALUES: every inference performs
+ * the same number of multiply-accumulate operations. The baseline can
+ * therefore be measured with synthetic weights at boot, needing neither a
+ * model upload nor the host tooling. The result appears on the UART as
+ * soon as the board comes up. */
+static void arm_baseline_boot(void) {
+    int i;
+    for (i = 0; i < ARM_L1*64; i++) armW1[i] = (s16)((i * 37) % 511 - 255);
+    for (i = 0; i < ARM_L1;    i++) armB1[i] = (s16)(i % 13);
+    for (i = 0; i < ARM_L2*64; i++) armW2[i] = (s16)((i * 29) % 511 - 255);
+    for (i = 0; i < ARM_L2;    i++) armB2[i] = (s16)(i % 7);
+    for (i = 0; i < ARM_L3*32; i++) armW3[i] = (s16)((i * 17) % 511 - 255);
+    for (i = 0; i < ARM_L3;    i++) armB3[i] = (s16)(i % 5);
+    for (i = 0; i < ARM_L4*16; i++) armW4[i] = (s16)((i * 11) % 511 - 255);
+    for (i = 0; i < ARM_L4;    i++) armB4[i] = (s16)(i % 3);
+
+    arm_weights_ready = 1;
+    arm_baseline_report(1000, 1);
+    arm_weights_ready = 0;   /* set back to 1 when a real model is loaded */
+}
+
+/* ── Network settings ── */
 #define BOARD_IP_0      192
 #define BOARD_IP_1      168
 #define BOARD_IP_2      1
@@ -72,9 +228,9 @@ static XTime g_t_poll;      /* taken in main loop right before xemacif_input */
 
 #define UDP_PORT        7000
 
-/* Q8.8 donusumu artik PC tarafinda yapiliyor */
+/* Q8.8 conversion is now performed on the host */
 
-/* ── Global değişkenler ── */
+/* ── Globals ── */
 #include "xaxidma.h"
 
 XAxiDma AxiDma;
@@ -92,29 +248,28 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
 
     u8 *payload = (u8 *)p->payload;
     
-    // Ilk Byte komut tipini belirliyor (Header)
+    // The first byte is the command type (header)
     u8 cmd = payload[0];
 
-    // Trafik Polisi (Header Switch-Case)
+    // Dispatch on the header
     switch (cmd) {
         case 0x01:
         case 'M': {
-            /* DURUM 1: MODEL GÜNCELLEME KOMUTU */
+            /* Case 1: model update command */
             
-            // GUVENLIK KONTROLU: Model 6819 adet float bekliyor (27.2 KB). 
-            // Eksik paket gelirse isleme alma.
+            // Sanity check: a model is 6819 floats (27.2 KB).
+            // Ignore the packet if it is short.
             if (p->tot_len < 4 + (6819 * sizeof(float))) {
-                break; // Paketi cope at
+                break; // discard the packet
             }
 
-            // LwIP pbuf ZINCIRLEME (Chained) calisir!
-            // Buyuk paketler (27KB) birden fazla pbuf'a bolunur.
-            // Dogrudan (payload + 4) adresinden sirayla 27KB okumak Data Abort (CPU cokmesi) yaratir.
-            // Bu yuzden LwIP fonksiyonu ile veriyi duz bir DDR dizisine kopyaliyoruz:
+            // lwIP pbufs are chained: a 27 KB packet is split across several of
+            // them, so reading 27 KB straight from (payload + 4) causes a data
+            // abort. Copy into a flat DDR array with the lwIP helper instead.
             static float model_buffer[6819];
             pbuf_copy_partial(p, model_buffer, 6819 * sizeof(float), 4);
 
-            // Artik guvenle tek parca halindeki DDR belleiginden okuyabiliriz:
+            // Now it is safe to read from contiguous DDR
             float *W1 = model_buffer;
             float *B1 = W1 + (64 * 64);
             
@@ -127,13 +282,30 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
             float *W4 = B3 + 16;
             float *B4 = W4 + (3 * 16);
 
-            // mlp_weight_loader.h icerisindeki donanim guncelleme fonksiyonunu cagir
+            // Call the hardware update function from mlp_weight_loader.h
             load_default_network(W1, B1, W2, B2, W3, B3, W4, B4);
 
-            // Frontend'e islemin basarili olduguna dair ACK gonder
+            /* Keep the same weights in Q8.8 for the ARM baseline. The conversion
+             * is float_to_q88, identical to the hardware path, so both compute
+             * the same numbers and the comparison is fair. */
+            {
+                int i;
+                for (i = 0; i < ARM_L1*64; i++) armW1[i] = (s16)float_to_q88(W1[i]);
+                for (i = 0; i < ARM_L1;    i++) armB1[i] = (s16)float_to_q88(B1[i]);
+                for (i = 0; i < ARM_L2*64; i++) armW2[i] = (s16)float_to_q88(W2[i]);
+                for (i = 0; i < ARM_L2;    i++) armB2[i] = (s16)float_to_q88(B2[i]);
+                for (i = 0; i < ARM_L3*32; i++) armW3[i] = (s16)float_to_q88(W3[i]);
+                for (i = 0; i < ARM_L3;    i++) armB3[i] = (s16)float_to_q88(B3[i]);
+                for (i = 0; i < ARM_L4*16; i++) armW4[i] = (s16)float_to_q88(W4[i]);
+                for (i = 0; i < ARM_L4;    i++) armB4[i] = (s16)float_to_q88(B4[i]);
+                arm_weights_ready = 1;
+            }
+            arm_baseline_report(1000, 0);  /* prints ns per inference to the UART */
+
+            // Acknowledge the upload to the host
             struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 1, PBUF_RAM);
             if (reply != NULL) {
-                ((u8 *)reply->payload)[0] = 0xFF; // ACK (Tamamlandi)
+                ((u8 *)reply->payload)[0] = 0xFF; // ACK
                 udp_sendto(pcb, reply, addr, port);
                 pbuf_free(reply);
             }
@@ -142,63 +314,68 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
 
         case 0x02:
         case 'D': {
-            /* DURUM 2: CANLI HFT VERİSİ */
+            /* Case 2: live feature vector */
             if (p->tot_len >= 4 + (64 * sizeof(s16))) {
 #if ENABLE_STAGE_TIMING
                 XTime t_cb, t_parse, t_dma, t_pl, t_read;
-                XTime_GetTime(&t_cb);   /* paket lwIP buffer'inda hazir */
+                XTime_GetTime(&t_cb);   /* packet is ready in the lwIP buffer */
 #endif
                 static s16 inputs[64] __attribute__((aligned(32)));
                 memcpy(inputs, payload + 4, 64 * sizeof(s16));
 #if ENABLE_STAGE_TIMING
-                XTime_GetTime(&t_parse); /* parse / feature-prep bitti */
+                XTime_GetTime(&t_parse); /* parse and feature hand-off complete */
 #endif
 
                 if (DmaInitSuccess) {
-                    // 1. Cache'i RAM'e bosalt ve DMA transferini baslat
+                    // 1. Flush the cache to RAM and start the DMA transfer
                     Xil_DCacheFlushRange((UINTPTR)inputs, 64 * sizeof(s16));
                     int status = XAxiDma_SimpleTransfer(&AxiDma, (UINTPTR)inputs, 64 * sizeof(s16), XAXIDMA_DMA_TO_DEVICE);
 
 #if ENABLE_STAGE_TIMING
-                    /* MM2S kanali bosalana kadar: PS->PL DMA transfer suresi */
+                    /* until the MM2S channel drains: PS to PL DMA time */
                     while (XAxiDma_Busy(&AxiDma, XAXIDMA_DMA_TO_DEVICE)) { }
                     XTime_GetTime(&t_dma);
 #endif
                     if (status == XST_SUCCESS) {
-                        // 2. DONE BEKLEME: Donanimin bitirme hizina yarasir sekilde basit bekleme
+                        // 2. Wait for done. A tight spin is appropriate at this latency.
                         while ((mlp_read_reg(0x04) & 0x01) == 0) {
-                            // Sadece bekle, donanim kesme yapana kadar (veya done sinyali gelene kadar)
+                            // spin until the hardware asserts done
                         }
                     }
 #if ENABLE_STAGE_TIMING
-                    XTime_GetTime(&t_pl);   /* AXI-Stream alimi + MLP hesabi bitti */
+                    XTime_GetTime(&t_pl);   /* AXI-Stream receive and MLP compute complete */
 #endif
 
-                    // 3. ARGMAX HESABI: Sonuclari (SELL, HOLD, BUY skorlarini) ayri ayri oku
+                    /* cycle count of this inference, from the RTL counter */
+                    u16 cyc = (u16)(mlp_read_reg(0x10) & 0xFFFF);
+
+                    // 3. Argmax: read the three class scores individually
                     s16 out0 = (s16)mlp_read_reg(0x100); // SELL skoru
                     s16 out1 = (s16)mlp_read_reg(0x104); // HOLD skoru
                     s16 out2 = (s16)mlp_read_reg(0x108); // BUY skoru
 #if ENABLE_STAGE_TIMING
-                    XTime_GetTime(&t_read); /* AXI-Lite result readout bitti */
+                    XTime_GetTime(&t_read); /* AXI-Lite result readout complete */
 #endif
 
-                    u8 final_decision = 0; // Varsayilan: SELL
+                    u8 final_decision = 0; // default class
                     if (out1 > out0 && out1 > out2) {
                         final_decision = 1; // HOLD
                     } else if (out2 > out0 && out2 > out1) {
                         final_decision = 2; // BUY
                     }
 
-                    // 4. Ag uzerinden Python Arayuzune nihai karari (0, 1, 2) don
-                    //    (ENABLE_STAGE_TIMING: karar + 5x u32 tick, toplam 21 bayt.
-                    //     Min Ethernet frame zaten 60B oldugu icin tel maliyeti ~0;
-                    //     UART hot path'te YOK -> tam hizda olcum.)
+                    // 4. Return the decision (0, 1, 2) to the host over the network.
+                    //    With ENABLE_STAGE_TIMING the reply is the decision plus
+                    //    five u32 ticks. The minimum Ethernet frame is 60 bytes
+                    //    anyway, so the wire cost is nil, and no UART is used in
+                    //    the hot path, so the measurement runs at full rate.
 #if ENABLE_STAGE_TIMING
-                    /* 27 bayt: [karar][5x u32 tick][3x s16 ham logit]
-                     * Logitler bit-exact dogrulama icin. Min Ethernet frame
-                     * zaten 60B oldugu icin 21->27 tel maliyeti sifir;
-                     * gecikme olcumleri etkilenmez. */
-                    struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 27, PBUF_RAM);
+                    /* 29 bytes: [decision][5x u32 ticks][3x s16 raw logits][u16 cycles]
+                     * The logits are what makes bit-exact verification possible
+                     * and the cycle count is what makes the determinism claim
+                     * measurable. The minimum Ethernet frame is 60 bytes, so
+                     * growing the reply costs nothing on the wire. */
+                    struct pbuf *reply = pbuf_alloc(PBUF_TRANSPORT, 29, PBUF_RAM);
                     if (reply != NULL) {
                         u8 *rp = (u8 *)reply->payload;
                         rp[0] = final_decision;
@@ -212,6 +389,7 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
                         /* Ham cikis logitleri (SELL, HOLD, BUY) */
                         s16 outs[3] = { out0, out1, out2 };
                         memcpy(rp + 21, outs, sizeof(outs));
+                        memcpy(rp + 27, &cyc, sizeof(cyc));   /* cevrim sayisi */
                         udp_sendto(pcb, reply, addr, port);
                         pbuf_free(reply);
                     }
@@ -229,7 +407,7 @@ void udp_recv_callback(void *arg, struct udp_pcb *pcb,
         }
 
         default:
-            // Tanimlanmayan bir komut geldiyse (Bozuk paket veya broadcast)
+            // Unrecognised command: a malformed packet or a broadcast
             break;
     }
 
@@ -293,15 +471,17 @@ int main(void)
     udp_recv(udp_pcb, udp_recv_callback, NULL);
 
 #if ENABLE_STAGE_TIMING
-    gt_enable();  /* Global Timer'i calistir (xiltimer BSP'de kapali olabilir) */
-    /* Parser icin tick frekansini bir kere bildir (Zynq-7000: CPU_FREQ/2) */
+    gt_enable();  /* Start the Global Timer; the xiltimer BSP may leave it disabled */
+    /* Announce the tick rate once for the host parser (CPU_FREQ/2) */
     xil_printf("TIMFREQ,%u\r\n", (u32)GT_TICK_HZ);
+    arm_baseline_boot();   /* print the ARM baseline; needs no model or host */
 #endif
 
     while (1) {
 #if ENABLE_STAGE_TIMING
-        /* Frame'i EMAC'ten cekmeden hemen once damga: recv sutunu
-         * = EMAC DMA + lwIP stack isleme suresi (NIC -> UDP buffer) */
+        /* Timestamp taken immediately before pulling the frame from the EMAC,
+         * so the recv column is EMAC DMA plus lwIP stack processing time,
+         * that is NIC to UDP buffer. */
         XTime_GetTime(&g_t_poll);
 #endif
         xemacif_input(netif_ptr);

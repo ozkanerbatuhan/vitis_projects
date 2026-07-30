@@ -1,7 +1,7 @@
 /*
- * platform_config.h — Platform yapılandırma sabitleri
+ * platform_config.h -- platform configuration constants
  *
- * LwIP ağ adaptörünün kullandığı EMAC base adresini tanımlar.
+ * Defines the EMAC base address used by the lwIP network adapter.
  */
 #ifndef PLATFORM_CONFIG_H
 #define PLATFORM_CONFIG_H

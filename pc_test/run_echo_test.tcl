@@ -1,21 +1,21 @@
-# run_echo_test.tcl — lwip_echo_server ELF'i ZedBoard'a yükle ve çalıştır
+# run_echo_test.tcl -- download and run the lwip_echo_server ELF on the ZedBoard
 connect
 
-# FPGA ve Sistemi tam resetle (MMU fault'u onlemek icin)
+# Full system reset, which avoids an MMU fault on reload
 targets -set -filter {name =~ "APU*"}
 rst -system
 after 2000
 
-# FPGA'yi programla (bitstream)
+# Program the FPGA with the bitstream
 fpga "D:/vivado projects/hft/hft.runs/impl_1/mlp_system_wrapper.bit"
 
-# PS7 init — Zynq donanımını başlat
+# PS7 init: bring up the Zynq hardware
 targets -set -nocase -filter {name =~ "*A9*#0"}
 loadhw -hw "D:/vitis_projects/mlp_platform/export/mlp_platform/hw/mlp_system_wrapper.xsa"
 source "D:/vitis_projects/mlp_platform/export/mlp_platform/hw/ps7_init.tcl"
 ps7_init
 ps7_post_config
 
-# ELF yükle ve çalıştır
+# Download and run the ELF
 dow "D:/vitis_projects/lwip_echo_server/build/lwip_echo_server.elf"
 con
